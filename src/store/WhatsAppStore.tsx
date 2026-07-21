@@ -190,12 +190,7 @@ const initialState: AppState = {
   messages: seedMessages,
   analytics: seedAnalytics,
   team: seedTeam,
-  activeTab: connectionMode({
-    whatsAppNumbers: seedWhatsAppNumbers,
-    emailAccounts: seedEmailAccounts,
-  }) === 'none'
-    ? 'connect'
-    : 'floor',
+  activeTab: 'floor',
   selectedCampaignId: seedCampaigns[0]?.id ?? null,
   brandFilter: 'all',
   selectedConversationId: null,

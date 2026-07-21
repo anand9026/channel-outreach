@@ -323,33 +323,10 @@ export function conversationKey(
   return `${organizationId}:${channel}:${accountId}:${influencerId}`
 }
 
-export const seedWhatsAppNumbers: WhatsAppNumber[] = [
-  {
-    id: 'wa_seed_1',
-    organizationId: ORG_ID,
-    displayName: 'Nova Beauty Support',
-    phoneDisplay: '+91 80 4567 8901',
-    phoneNumberId: 'pn_nova_support',
-    wabaId: 'waba_nova_beauty_01',
-    businessId: 'biz_nova_meta_8821',
-    qualityRating: 'GREEN',
-    messagingTier: 'TIER_10K',
-    connectedAt: '2026-06-01T09:00:00Z',
-  },
-]
+/** Start disconnected so Home shows the empty connect CTA by default. */
+export const seedWhatsAppNumbers: WhatsAppNumber[] = []
 
-export const seedEmailAccounts: EmailAccount[] = [
-  {
-    id: 'em_seed_1',
-    organizationId: ORG_ID,
-    fromName: 'Nova Beauty Partnerships',
-    fromEmail: 'partnerships@novabeauty.co',
-    provider: 'sendgrid',
-    domain: 'novabeauty.co',
-    verified: true,
-    connectedAt: '2026-06-01T09:30:00Z',
-  },
-]
+export const seedEmailAccounts: EmailAccount[] = []
 export const seedChannels: CampaignChannel[] = []
 export const seedConversations: Conversation[] = []
 export const seedMessages: Message[] = []
