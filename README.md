@@ -1,4 +1,4 @@
-# Outreact
+# Channel Outreach
 
 Interactive WhatsApp + email outreach prototype for Reelax (multi-tenant SaaS demo).
 
