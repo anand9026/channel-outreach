@@ -3,7 +3,27 @@ export type TemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION'
 export type TemplateStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISABLED' | 'ACTIVE'
 export type ConversationStatus = 'open' | 'pending' | 'resolved'
 export type MessageDirection = 'outbound' | 'inbound'
-export type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+export type DeliveryStatus =
+  | 'queued'
+  | 'scheduled'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed'
+  | 'cancelled'
+
+/** Dual-channel waterfall: send A first, B only if no reply (after wait). */
+export type ChannelOrder = 'whatsapp_first' | 'email_first'
+
+export interface CascadeOptions {
+  order: ChannelOrder
+  /** ISO time for first channel; null/undefined = send immediately */
+  firstAt?: string | null
+  /** Product wait before follow-up channel (prototype compresses this in the UI timer) */
+  waitHours: 24 | 48 | 72
+  /** Cancel scheduled follow-up if influencer replies on the first channel */
+  stopOnReply: boolean
+}
 export type PhoneQuality = 'GREEN' | 'YELLOW' | 'RED'
 export type EmailProvider = 'sendgrid' | 'ses' | 'smtp'
 export type TabId = 'floor' | 'connect' | 'templates' | 'campaigns' | 'inbox' | 'analytics'
@@ -167,6 +187,14 @@ export interface Message {
   isTemplate: boolean
   createdAt: string
   metaMessageId: string
+  /** Shared id for a dual-channel cascade batch */
+  cascadeId?: string
+  /** 1 = first channel, 2 = follow-up */
+  cascadeStep?: 1 | 2
+  /** Product-facing scheduled time (ISO) */
+  scheduledFor?: string
+  /** Prototype timer: epoch ms when scheduled → queued */
+  demoReleaseAt?: number
 }
 
 export interface Conversation {

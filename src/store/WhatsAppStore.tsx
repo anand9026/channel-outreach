@@ -27,6 +27,7 @@ import {
   seedTemplates,
   seedWhatsAppNumbers,
 } from '../data/seed'
+import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
 import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
 import type {
   AudienceSource,
@@ -34,6 +35,7 @@ import type {
   Campaign,
   CampaignAnalytics,
   CampaignChannel,
+  CascadeOptions,
   CollectionList,
   ConnectionMode,
   Conversation,
@@ -152,8 +154,11 @@ type Action =
         influencerIds: string[]
         whatsapp?: { phoneNumberId: string; templateId: string; variableMapping: Record<string, string> }
         email?: { emailAccountId: string; templateId: string; variableMapping: Record<string, string> }
+        /** Dual-channel waterfall + schedule. Ignored for single-channel sends. */
+        cascade?: CascadeOptions
       }
     }
+  | { type: 'RELEASE_SCHEDULED'; messageId: string }
   | { type: 'ADVANCE_MESSAGE_STATUS'; messageId: string; status: DeliveryStatus }
   | { type: 'SIMULATE_INBOUND'; conversationId: string; body: string }
   | { type: 'SEND_REPLY'; conversationId: string; body: string }
@@ -228,6 +233,56 @@ function findChannel(
   channel: OutreachChannel,
 ): CampaignChannel | undefined {
   return channels.find((ch) => ch.campaignId === campaignId && ch.channel === channel)
+}
+
+function touchConversation(
+  conversations: Conversation[],
+  opts: {
+    convId: string
+    channel: OutreachChannel
+    phoneNumberId?: string
+    emailAccountId?: string
+    influencerId: string
+    campaignId: string
+    ts: string
+    preview: string
+  },
+): Conversation[] {
+  const existing = conversations.find((c) => c.id === opts.convId)
+  if (!existing) {
+    return [
+      ...conversations,
+      {
+        id: opts.convId,
+        organizationId: ORG_ID,
+        channel: opts.channel,
+        phoneNumberId: opts.phoneNumberId,
+        emailAccountId: opts.emailAccountId,
+        influencerId: opts.influencerId,
+        campaignIds: [opts.campaignId],
+        lastCampaignId: opts.campaignId,
+        status: 'open',
+        lastMessageAt: opts.ts,
+        unreadCount: 0,
+        lastPreview: opts.preview.slice(0, 80),
+      },
+    ]
+  }
+  const campaignIds = existing.campaignIds.includes(opts.campaignId)
+    ? existing.campaignIds
+    : [...existing.campaignIds, opts.campaignId]
+  return conversations.map((c) =>
+    c.id === opts.convId
+      ? {
+          ...c,
+          campaignIds,
+          lastCampaignId: opts.campaignId,
+          status: 'open' as const,
+          lastMessageAt: opts.ts,
+          lastPreview: opts.preview.slice(0, 80),
+        }
+      : c,
+  )
 }
 
 function bumpAnalytics(
@@ -412,13 +467,14 @@ function reducer(state: AppState, action: Action): AppState {
         ),
       }
     case 'PREPARE_AND_SEND': {
-      const { campaignId, influencerIds, whatsapp, email } = action.payload
+      const { campaignId, influencerIds, whatsapp, email, cascade } = action.payload
       if (influencerIds.length === 0) return state
 
       let channels = [...state.channels]
       const upsert = (
         channel: OutreachChannel,
         extra: Partial<CampaignChannel> & { templateId: string },
+        status: CampaignChannel['status'] = 'draft',
       ) => {
         const existing = findChannel(channels, campaignId, channel)
         if (existing) {
@@ -428,7 +484,7 @@ function reducer(state: AppState, action: Action): AppState {
                   ...ch,
                   ...extra,
                   selectedInfluencerIds: influencerIds,
-                  status: 'draft' as const,
+                  status,
                 }
               : ch,
           )
@@ -442,7 +498,7 @@ function reducer(state: AppState, action: Action): AppState {
           channel,
           variableMapping: {},
           selectedInfluencerIds: influencerIds,
-          status: 'draft',
+          status,
           ...extra,
         })
         return id
@@ -468,10 +524,232 @@ function reducer(state: AppState, action: Action): AppState {
         )
       }
 
-      return reducer(
-        { ...state, channels },
-        { type: 'SEND_CHANNELS', channelIds },
+      const both = Boolean(whatsapp && email)
+      const useCascade = both && Boolean(cascade?.stopOnReply)
+
+      if (!useCascade || !cascade) {
+        return reducer({ ...state, channels }, { type: 'SEND_CHANNELS', channelIds })
+      }
+
+      // Cascade: send first channel, schedule second; cancel second on reply.
+      const order = cascade.order
+      const step1 = firstChannel(order)
+      const step2 = secondChannel(order)
+      const cascadeId = uid('casc')
+      const now = Date.now()
+      const firstAtMs = cascade.firstAt ? new Date(cascade.firstAt).getTime() : now
+      const firstImmediate = !cascade.firstAt || firstAtMs <= now
+      const waitMs = demoWaitMs(cascade.waitHours)
+      const firstBaseMs = firstImmediate ? now : firstAtMs
+      const secondReleaseMs = firstBaseMs + waitMs
+      const secondProductFor = new Date(
+        firstBaseMs + cascade.waitHours * 60 * 60 * 1000,
+      ).toISOString()
+
+      let conversations = [...state.conversations]
+      let messages = [...state.messages]
+      let analytics = [...state.analytics]
+      const ts = nowIso()
+
+      const channelConfigs: Record<
+        OutreachChannel,
+        | {
+            accountId: string
+            phoneNumberId?: string
+            emailAccountId?: string
+            templateId: string
+            variableMapping: Record<string, string>
+            channelRowId: string
+          }
+        | undefined
+      > = {
+        whatsapp: whatsapp
+          ? {
+              accountId: whatsapp.phoneNumberId,
+              phoneNumberId: whatsapp.phoneNumberId,
+              templateId: whatsapp.templateId,
+              variableMapping: whatsapp.variableMapping,
+              channelRowId: channelIds.find(
+                (id) => channels.find((c) => c.id === id)?.channel === 'whatsapp',
+              )!,
+            }
+          : undefined,
+        email: email
+          ? {
+              accountId: email.emailAccountId,
+              emailAccountId: email.emailAccountId,
+              templateId: email.templateId,
+              variableMapping: email.variableMapping,
+              channelRowId: channelIds.find(
+                (id) => channels.find((c) => c.id === id)?.channel === 'email',
+              )!,
+            }
+          : undefined,
+      }
+
+      const campaign = state.campaigns.find((c) => c.id === campaignId)
+      const brand = campaign?.brandId
+        ? state.brands.find((b) => b.id === campaign.brandId) ?? null
+        : null
+
+      const emitForChannel = (
+        channel: OutreachChannel,
+        cascadeStep: 1 | 2,
+        opts: { status: DeliveryStatus; scheduledFor?: string; demoReleaseAt?: number },
+      ) => {
+        const cfg = channelConfigs[channel]
+        if (!cfg) return
+        const template = state.templates.find((t) => t.id === cfg.templateId)
+        if (!template) return
+        if (channel === 'whatsapp' && template.status !== 'APPROVED') return
+        if (
+          channel === 'email' &&
+          template.status !== 'ACTIVE' &&
+          template.status !== 'APPROVED'
+        )
+          return
+
+        for (const influencerId of influencerIds) {
+          const influencer = state.influencers.find((i) => i.id === influencerId)
+          if (!influencer) continue
+          const convId = conversationKey(ORG_ID, channel, cfg.accountId, influencerId)
+          const bindings = mergeBindings(template.bindings, cfg.variableMapping)
+          const resolveCtx = {
+            org: state.organization,
+            brand,
+            campaign: campaign ?? null,
+            influencer,
+          }
+          const body = renderWithBindings(template.body, bindings, resolveCtx)
+          const subject = template.subject
+            ? renderWithBindings(template.subject, bindings, resolveCtx)
+            : undefined
+
+          conversations = touchConversation(conversations, {
+            convId,
+            channel,
+            phoneNumberId: cfg.phoneNumberId,
+            emailAccountId: cfg.emailAccountId,
+            influencerId,
+            campaignId,
+            ts,
+            preview:
+              opts.status === 'scheduled'
+                ? `Scheduled follow-up · ${body.slice(0, 60)}`
+                : body,
+          })
+
+          messages.push({
+            id: uid('msg'),
+            conversationId: convId,
+            organizationId: ORG_ID,
+            channel,
+            campaignId,
+            direction: 'outbound',
+            subject,
+            body,
+            status: opts.status,
+            isTemplate: true,
+            createdAt: ts,
+            metaMessageId:
+              channel === 'whatsapp' ? `wamid.${uid('meta')}` : `email.${uid('sg')}`,
+            cascadeId,
+            cascadeStep,
+            scheduledFor: opts.scheduledFor,
+            demoReleaseAt: opts.demoReleaseAt,
+          })
+        }
+
+        if (opts.status === 'queued') {
+          analytics = bumpAnalytics(analytics, campaignId, channel, (m) => {
+            m.sent += influencerIds.length
+          })
+          channels = channels.map((ch) =>
+            ch.id === cfg.channelRowId
+              ? { ...ch, status: 'sent' as const, sentAt: ts }
+              : ch,
+          )
+        } else {
+          channels = channels.map((ch) =>
+            ch.id === cfg.channelRowId
+              ? {
+                  ...ch,
+                  status: 'scheduled' as const,
+                  scheduledAt: opts.scheduledFor,
+                }
+              : ch,
+          )
+        }
+      }
+
+      emitForChannel(
+        step1,
+        1,
+        firstImmediate
+          ? { status: 'queued' }
+          : {
+              status: 'scheduled',
+              scheduledFor: new Date(firstAtMs).toISOString(),
+              demoReleaseAt: firstAtMs,
+            },
       )
+      emitForChannel(step2, 2, {
+        status: 'scheduled',
+        scheduledFor: secondProductFor,
+        demoReleaseAt: secondReleaseMs,
+      })
+
+      return {
+        ...state,
+        channels,
+        conversations,
+        messages,
+        analytics,
+      }
+    }
+    case 'RELEASE_SCHEDULED': {
+      const msg = state.messages.find((m) => m.id === action.messageId)
+      if (!msg || msg.status !== 'scheduled') return state
+
+      let analytics = state.analytics
+      if (msg.campaignId) {
+        analytics = bumpAnalytics(analytics, msg.campaignId, msg.channel, (m) => {
+          m.sent += 1
+        })
+      }
+
+      const channels = state.channels.map((ch) => {
+        if (!msg.campaignId || ch.campaignId !== msg.campaignId || ch.channel !== msg.channel) {
+          return ch
+        }
+        return { ...ch, status: 'sent' as const, sentAt: nowIso() }
+      })
+
+      const conversations = state.conversations.map((c) =>
+        c.id === msg.conversationId
+          ? { ...c, lastPreview: msg.body.slice(0, 80), lastMessageAt: nowIso() }
+          : c,
+      )
+
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.messageId
+            ? { ...m, status: 'queued' as const, demoReleaseAt: undefined }
+            : m,
+        ),
+        analytics,
+        channels,
+        conversations,
+        toasts: [
+          ...state.toasts,
+          {
+            id: uid('toast'),
+            message: `Follow-up ${msg.channel === 'whatsapp' ? 'WhatsApp' : 'Email'} released`,
+            variant: 'info' as const,
+          },
+        ].slice(-4),
+      }
     }
     case 'SEND_CHANNELS': {
       let conversations = [...state.conversations]
@@ -600,6 +878,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'ADVANCE_MESSAGE_STATUS': {
       const msg = state.messages.find((m) => m.id === action.messageId)
       if (!msg) return state
+      if (msg.status === 'cancelled' || msg.status === 'scheduled') return state
       let analytics = state.analytics
       const campaignId = msg.campaignId
       if (campaignId) {
@@ -646,9 +925,47 @@ function reducer(state: AppState, action: Action): AppState {
           m.replied += 1
         })
       }
+
+      // Cancel scheduled cascade follow-ups for this influencer (any cascade they are in).
+      const cascadeIds = new Set(
+        state.messages
+          .filter((m) => {
+            if (!m.cascadeId || m.cascadeStep !== 1) return false
+            const mc = state.conversations.find((c) => c.id === m.conversationId)
+            return mc?.influencerId === conv.influencerId
+          })
+          .map((m) => m.cascadeId!),
+      )
+
+      let cancelledCount = 0
+      const messages = [...state.messages, msg].map((m) => {
+        if (
+          m.status === 'scheduled' &&
+          m.cascadeStep === 2 &&
+          m.cascadeId &&
+          cascadeIds.has(m.cascadeId)
+        ) {
+          cancelledCount += 1
+          return { ...m, status: 'cancelled' as const, demoReleaseAt: undefined }
+        }
+        return m
+      })
+
+      const toasts =
+        cancelledCount > 0
+          ? [
+              ...state.toasts,
+              {
+                id: uid('toast'),
+                message: `Follow-up cancelled — creator replied on ${conv.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}`,
+                variant: 'success' as const,
+              },
+            ].slice(-4)
+          : state.toasts
+
       return {
         ...state,
-        messages: [...state.messages, msg],
+        messages,
         conversations: state.conversations.map((c) =>
           c.id === conv.id
             ? {
@@ -663,6 +980,7 @@ function reducer(state: AppState, action: Action): AppState {
             : c,
         ),
         analytics,
+        toasts,
       }
     }
     case 'SEND_REPLY': {
@@ -828,7 +1146,9 @@ interface StoreContextValue {
       influencerIds: string[]
       whatsapp?: { phoneNumberId: string; templateId: string; variableMapping: Record<string, string> }
       email?: { emailAccountId: string; templateId: string; variableMapping: Record<string, string> }
+      cascade?: CascadeOptions
     }) => void
+    releaseScheduled: (messageId: string) => void
     simulateInbound: (conversationId: string, body: string) => void
     sendReply: (conversationId: string, body: string) => boolean
     assignConversation: (conversationId: string, memberId: string | undefined) => void
@@ -1024,6 +1344,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'SET_SHARED_INFLUENCERS', payload: { campaignId, influencerIds } }),
       sendChannels: (channelIds) => dispatch({ type: 'SEND_CHANNELS', channelIds }),
       prepareAndSend: (payload) => dispatch({ type: 'PREPARE_AND_SEND', payload }),
+      releaseScheduled: (messageId) => dispatch({ type: 'RELEASE_SCHEDULED', messageId }),
       simulateInbound: (conversationId, body) =>
         dispatch({ type: 'SIMULATE_INBOUND', conversationId, body }),
       sendReply,
@@ -1090,18 +1411,40 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
 
   const prevMessageCount = useRef(state.messages.length)
   const pipelined = useRef(new Set<string>())
+  const scheduledTimers = useRef(new Map<string, number>())
 
   useEffect(() => {
-    if (state.messages.length <= prevMessageCount.current) {
-      prevMessageCount.current = state.messages.length
-      return
-    }
-    const newMessages = state.messages.slice(prevMessageCount.current)
-    prevMessageCount.current = state.messages.length
-    for (const msg of newMessages) {
-      if (msg.status === 'queued' && msg.direction === 'outbound' && !pipelined.current.has(msg.id)) {
+    // Pipeline any newly queued outbound messages (including released schedules).
+    for (const msg of state.messages) {
+      if (
+        msg.status === 'queued' &&
+        msg.direction === 'outbound' &&
+        !pipelined.current.has(msg.id)
+      ) {
         pipelined.current.add(msg.id)
         scheduleMessagePipeline(msg.id)
+      }
+    }
+    prevMessageCount.current = state.messages.length
+
+    // Arm demo timers for scheduled cascade / delayed first sends.
+    for (const msg of state.messages) {
+      if (msg.status !== 'scheduled' || msg.demoReleaseAt == null) continue
+      if (scheduledTimers.current.has(msg.id)) continue
+      const delay = Math.max(0, msg.demoReleaseAt - Date.now())
+      const handle = window.setTimeout(() => {
+        scheduledTimers.current.delete(msg.id)
+        dispatch({ type: 'RELEASE_SCHEDULED', messageId: msg.id })
+      }, delay)
+      scheduledTimers.current.set(msg.id, handle)
+    }
+
+    // Clear timers for cancelled / already-released messages.
+    for (const [id, handle] of scheduledTimers.current) {
+      const msg = state.messages.find((m) => m.id === id)
+      if (!msg || msg.status !== 'scheduled') {
+        window.clearTimeout(handle)
+        scheduledTimers.current.delete(id)
       }
     }
   }, [state.messages, scheduleMessagePipeline])

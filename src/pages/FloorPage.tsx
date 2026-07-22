@@ -7,8 +7,12 @@ import {
   Send,
   Sparkles,
 } from 'lucide-react'
-import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
+import { CascadeControls } from '../components/CascadeControls'
+import { DeliveryStatusBadge } from '../components/StatusBadge'
+import { defaultCascadeOptions } from '../lib/cascade'
 import { bindingToOverrideValue } from '../lib/variables'
+import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
+import type { CascadeOptions } from '../types'
 
 type SendMode = 'whatsapp' | 'email' | 'both'
 
@@ -31,6 +35,8 @@ export function FloorPage() {
   const [previewInfId, setPreviewInfId] = useState('')
   const [sending, setSending] = useState(false)
   const [sendPulse, setSendPulse] = useState(0)
+  const [cascadeEnabled, setCascadeEnabled] = useState(true)
+  const [cascade, setCascade] = useState<CascadeOptions>(defaultCascadeOptions)
 
   const filteredCampaigns = useMemo(() => {
     if (brandFilter === 'all') return state.campaigns
@@ -130,8 +136,19 @@ export function FloorPage() {
         variableMapping: mappingFromTemplate(emailTemplate),
       }
     }
+    if (sm === 'both' && cascadeEnabled) {
+      payload.cascade = cascade
+    }
     return payload
   }
+
+  const pendingFollowups = useMemo(
+    () =>
+      state.messages.filter(
+        (m) => m.status === 'scheduled' && m.direction === 'outbound' && m.cascadeStep === 2,
+      ),
+    [state.messages],
+  )
 
   const send = () => {
     if (!campaign || picked.length === 0) {
@@ -150,13 +167,16 @@ export function FloorPage() {
       actions.toast('Need both channels + templates', 'error')
       return
     }
-
     setSending(true)
     setSendPulse((n) => n + 1)
     actions.prepareAndSend(buildPayload(campaign.id, picked, sendMode))
     const label =
       sendMode === 'both'
-        ? 'WhatsApp + Email'
+        ? cascadeEnabled
+          ? cascade.order === 'whatsapp_first'
+            ? 'WhatsApp first → Email held'
+            : 'Email first → WhatsApp held'
+          : 'WhatsApp + Email'
         : sendMode === 'whatsapp'
           ? 'WhatsApp'
           : 'Email'
@@ -329,6 +349,43 @@ export function FloorPage() {
               {label}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      <CascadeControls
+        enabled={mode === 'both' && sendMode === 'both'}
+        value={cascade}
+        onChange={setCascade}
+        cascadeEnabled={cascadeEnabled}
+        onCascadeEnabledChange={setCascadeEnabled}
+      />
+
+      {pendingFollowups.length > 0 ? (
+        <div className="pending-followups">
+          <h4>Pending follow-ups ({pendingFollowups.length})</h4>
+          <ul>
+            {pendingFollowups.slice(0, 6).map((m) => {
+              const conv = state.conversations.find((c) => c.id === m.conversationId)
+              const inf = state.influencers.find((i) => i.id === conv?.influencerId)
+              return (
+                <li key={m.id}>
+                  <DeliveryStatusBadge status={m.status} />
+                  <span>
+                    {m.channel === 'whatsapp' ? 'WhatsApp' : 'Email'} · {inf?.name ?? 'Creator'}
+                  </span>
+                  <span className="muted-xs">
+                    product: {m.scheduledFor ? new Date(m.scheduledFor).toLocaleString() : '—'}
+                    {m.demoReleaseAt
+                      ? ` · demo release ${new Date(m.demoReleaseAt).toLocaleTimeString()}`
+                      : ''}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          <p className="muted-xs" style={{ margin: '8px 0 0' }}>
+            Reply in Inbox on the first channel to cancel these automatically.
+          </p>
         </div>
       ) : null}
 
@@ -506,7 +563,11 @@ export function FloorPage() {
             <span>
               via{' '}
               {sendMode === 'both'
-                ? 'WhatsApp + Email'
+                ? cascadeEnabled
+                  ? cascade.order === 'whatsapp_first'
+                    ? 'WA → Email (cascade)'
+                    : 'Email → WA (cascade)'
+                  : 'WhatsApp + Email'
                 : sendMode === 'whatsapp'
                   ? 'WhatsApp'
                   : 'Email'}
@@ -522,7 +583,11 @@ export function FloorPage() {
             </button>
             <button type="button" className="fire-btn" onClick={send} disabled={sending}>
               <Send size={16} />
-              {sending ? 'Sending…' : 'Send now'}
+              {sending
+                ? 'Sending…'
+                : sendMode === 'both' && cascadeEnabled
+                  ? 'Start cascade'
+                  : 'Send now'}
             </button>
           </div>
         </div>

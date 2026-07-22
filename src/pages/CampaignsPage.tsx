@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { FolderOpen, Mail, MessageCircle, Plus, Send, Users } from 'lucide-react'
+import { CascadeControls } from '../components/CascadeControls'
 import { VariableMapper } from '../components/VariableMapper'
+import { defaultCascadeOptions } from '../lib/cascade'
 import {
   bindingToOverrideValue,
   mergeBindings,
 } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
-import type { AudienceSource, VariableBinding } from '../types'
+import type { AudienceSource, CascadeOptions, VariableBinding } from '../types'
 
 export function CampaignsPage() {
   const { state, actions } = useWhatsAppStore()
@@ -33,6 +35,8 @@ export function CampaignsPage() {
     mode === 'email' ? 'email' : 'whatsapp',
   )
   const [brandLens, setBrandLens] = useState(state.brandFilter)
+  const [cascadeEnabled, setCascadeEnabled] = useState(true)
+  const [cascade, setCascade] = useState<CascadeOptions>(defaultCascadeOptions)
 
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
@@ -303,10 +307,22 @@ export function CampaignsPage() {
       }
     }
 
+    if (useWhatsApp && useEmail && cascadeEnabled) {
+      payload.cascade = cascade
+    }
+
     actions.prepareAndSend(payload)
     const parts = []
-    if (useWhatsApp) parts.push('WhatsApp')
-    if (useEmail) parts.push('Email')
+    if (useWhatsApp && useEmail && cascadeEnabled) {
+      parts.push(
+        cascade.order === 'whatsapp_first'
+          ? 'WhatsApp first → Email held'
+          : 'Email first → WhatsApp held',
+      )
+    } else {
+      if (useWhatsApp) parts.push('WhatsApp')
+      if (useEmail) parts.push('Email')
+    }
     actions.toast(`Sending ${parts.join(' + ')} to ${ids.length} influencer(s)`, 'success')
     actions.setTab('inbox')
   }
@@ -586,6 +602,14 @@ export function CampaignsPage() {
             Email
           </label>
         </div>
+
+        <CascadeControls
+          enabled={useWhatsApp && useEmail}
+          value={cascade}
+          onChange={setCascade}
+          cascadeEnabled={cascadeEnabled}
+          onCascadeEnabledChange={setCascadeEnabled}
+        />
 
         <div className="campaign-steps">
           <div className="step-card">

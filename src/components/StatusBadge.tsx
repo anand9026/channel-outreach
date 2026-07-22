@@ -41,8 +41,10 @@ function toneForDelivery(status: DeliveryStatus): BadgeTone {
     case 'sent':
       return 'success'
     case 'failed':
+    case 'cancelled':
       return 'error'
     case 'queued':
+    case 'scheduled':
       return 'warning'
     default:
       return 'neutral'
