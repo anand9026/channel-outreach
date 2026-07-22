@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# supervisor symlink (local dev only)
+frontend
+
