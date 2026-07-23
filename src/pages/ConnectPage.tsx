@@ -1,6 +1,7 @@
 import { CheckCircle2, Mail, Shield, Smartphone } from 'lucide-react'
 import { useState } from 'react'
 import { QualityBadge } from '../components/StatusBadge'
+import { API_BASE_URL, ApiError, getWhatsAppConnection } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import type { EmailProvider } from '../types'
 
@@ -12,8 +13,45 @@ export function ConnectPage() {
   const [fromEmail, setFromEmail] = useState('partnerships@novabeauty.co')
   const [provider, setProvider] = useState<EmailProvider>('sendgrid')
   const [domain, setDomain] = useState('novabeauty.co')
+  const [loadingConnection, setLoadingConnection] = useState(false)
 
   const step = state.connectStep
+
+  const loadCloudApiTestNumber = async () => {
+    setLoadingConnection(true)
+    try {
+      const info = await getWhatsAppConnection()
+      if (!info?.phone_number_id || !info?.waba_id) {
+        actions.toast('API returned incomplete connection info', 'error')
+        return
+      }
+      if (!info.has_access_token) {
+        actions.toast(
+          'Server has no WHATSAPP_OUTREACH_ACCESS_TOKEN — set it in reelax-server .env',
+          'error',
+        )
+        return
+      }
+      actions.connectWhatsApp({
+        displayName: 'Cloud API Test Number',
+        phoneDisplay: '+1 555 (Meta test)',
+        phoneNumberId: info.phone_number_id,
+        wabaId: info.waba_id,
+        businessId: 'bridgeness',
+      })
+      actions.toast(`Loaded from ${API_BASE_URL}`, 'success')
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to load connection'
+      actions.toast(message, 'error')
+    } finally {
+      setLoadingConnection(false)
+    }
+  }
 
   return (
     <div className="page-grid">
@@ -68,13 +106,28 @@ export function ConnectPage() {
             ) : (
               <div className="empty-panel compact">
                 <p>No WhatsApp number connected.</p>
-                <button
-                  type="button"
-                  className="btn primary wa"
-                  onClick={() => actions.openConnect(true, 'whatsapp')}
-                >
-                  Start Embedded Signup
-                </button>
+                <p className="muted-xs" style={{ marginBottom: 12 }}>
+                  API: <code>{API_BASE_URL}</code>
+                </p>
+                <div className="stack gap-2">
+                  <button
+                    type="button"
+                    className="btn primary wa"
+                    disabled={loadingConnection}
+                    onClick={() => void loadCloudApiTestNumber()}
+                  >
+                    {loadingConnection
+                      ? 'Loading…'
+                      : 'Use Cloud API test number'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => actions.openConnect(true, 'whatsapp')}
+                  >
+                    Start Embedded Signup (demo)
+                  </button>
+                </div>
               </div>
             )}
           </div>
