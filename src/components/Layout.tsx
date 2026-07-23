@@ -38,7 +38,7 @@ export function Layout({ children }: { children: ReactNode }) {
             ? 'Email connected · add WhatsApp anytime'
             : 'Connect a channel to get started',
     connect: 'Connect WhatsApp, Email, or both',
-    templates: 'Build messages with data fields from your roster',
+    templates: 'List Meta templates · create in popup · send with CSV / phones / influencers',
     campaigns: 'Attach channels and send to campaign influencers',
     inbox: 'Conversations per org, channel, and influencer',
     analytics: 'Delivery and replies by channel',

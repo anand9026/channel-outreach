@@ -857,6 +857,60 @@ tbody tr:hover {
   margin-top: 8px;
 }
 
+.modal-wide {
+  width: min(720px, 100%);
+  max-height: min(90vh, 900px);
+  overflow: auto;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 8px;
+}
+
+.audience-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.preview-box {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
