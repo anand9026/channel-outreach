@@ -162,6 +162,25 @@ export async function createWhatsAppTemplate(input: {
   return res.data
 }
 
+export async function sendWhatsAppText(input: {
+  to: string
+  text: string
+  phone_number_id?: string
+}) {
+  const res = await request<ApiSuccess<Record<string, unknown>>>(
+    '/whatsapp-outreach/messages/text',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        to: input.to.replace(/^\+/, ''),
+        text: input.text,
+        phone_number_id: input.phone_number_id,
+      }),
+    },
+  )
+  return res.data
+}
+
 export async function sendWhatsAppTemplate(input: {
   to: string
   template_name: string

@@ -9,14 +9,32 @@ import {
   listWhatsAppTemplates,
   type MetaTemplate,
 } from '../lib/api'
+import { fillMetaBody, extractMetaSlots } from '../lib/templateSlots'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import type { OutreachChannel } from '../types'
+
+function metaBody(t: MetaTemplate): string {
+  return t.components?.find((c) => c.type === 'BODY')?.text ?? ''
+}
+
+function samplePreview(t: MetaTemplate): string {
+  const body = metaBody(t)
+  const slots = extractMetaSlots(body)
+  const example =
+    t.components?.find((c) => c.type === 'BODY')?.example?.body_text?.[0] ?? []
+  const values: Record<string, string> = {}
+  slots.forEach((s, i) => {
+    values[s] = example[i] || `value_${s}`
+  })
+  return fillMetaBody(body, values) || body || '—'
+}
 
 export function TemplatesPage() {
   const { state, actions } = useWhatsAppStore()
   const [listTab, setListTab] = useState<'meta' | 'local'>('meta')
   const [filter, setFilter] = useState<'all' | OutreachChannel>('all')
   const [createOpen, setCreateOpen] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<'APPROVED' | 'ALL'>('APPROVED')
 
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [metaLoading, setMetaLoading] = useState(false)
@@ -27,6 +45,11 @@ export function TemplatesPage() {
       filter === 'all' ? state.templates : state.templates.filter((t) => t.channel === filter)
     return [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }, [state.templates, filter])
+
+  const visibleMeta = useMemo(() => {
+    if (statusFilter === 'ALL') return metaTemplates
+    return metaTemplates.filter((t) => t.status === 'APPROVED')
+  }, [metaTemplates, statusFilter])
 
   const syncMetaTemplates = useCallback(async () => {
     setMetaLoading(true)
@@ -61,10 +84,10 @@ export function TemplatesPage() {
       <section className="card">
         <div className="row-between">
           <div>
-            <h2>Templates</h2>
+            <h2>Template library</h2>
             <p className="card-lead">
-              List & sync approved scripts here. Create in a popup. Map CSV / phones /
-              influencers when you send.
+              Approved scripts for sending. Create = Meta body + samples only (no brand /
+              influencer). Mapping happens in Send / Campaigns.
             </p>
           </div>
           <div className="row-actions">
@@ -105,21 +128,39 @@ export function TemplatesPage() {
 
         {listTab === 'meta' ? (
           <>
-            <p className="muted-xs" style={{ marginTop: 8 }}>
-              Source: <code>{API_BASE_URL}</code>
-            </p>
+            <div className="row-between" style={{ marginTop: 8 }}>
+              <p className="muted-xs">
+                Source: <code>{API_BASE_URL}</code>
+              </p>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={statusFilter === 'APPROVED' ? 'active' : ''}
+                  onClick={() => setStatusFilter('APPROVED')}
+                >
+                  Approved
+                </button>
+                <button
+                  type="button"
+                  className={statusFilter === 'ALL' ? 'active' : ''}
+                  onClick={() => setStatusFilter('ALL')}
+                >
+                  All statuses
+                </button>
+              </div>
+            </div>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Language</th>
+                    <th>Preview</th>
                     <th>Category</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {metaTemplates.length === 0 ? (
+                  {visibleMeta.length === 0 ? (
                     <tr>
                       <td colSpan={4}>
                         <p className="muted">
@@ -127,20 +168,25 @@ export function TemplatesPage() {
                             ? metaError
                             : metaLoading
                               ? 'Loading…'
-                              : 'No Meta templates yet. Create one to get started.'}
+                              : statusFilter === 'APPROVED'
+                                ? 'No APPROVED templates yet — create one and wait for Meta.'
+                                : 'No Meta templates yet.'}
                         </p>
                       </td>
                     </tr>
                   ) : (
-                    metaTemplates.map((t) => (
+                    visibleMeta.map((t) => (
                       <tr key={t.id}>
                         <td>
                           <strong>{t.name}</strong>
-                          <p className="muted-xs truncate">
-                            {t.components?.find((c) => c.type === 'BODY')?.text ?? '—'}
+                          <p className="muted-xs">
+                            {t.language} · {t.category}
                           </p>
                         </td>
-                        <td>{t.language}</td>
+                        <td>
+                          <p className="template-preview-cell">{samplePreview(t)}</p>
+                          <p className="muted-xs truncate">Raw: {metaBody(t) || '—'}</p>
+                        </td>
                         <td>{t.category}</td>
                         <td>
                           <TemplateStatusBadge
@@ -181,8 +227,8 @@ export function TemplatesPage() {
                 <thead>
                   <tr>
                     <th>Name</th>
+                    <th>Preview</th>
                     <th>Channel</th>
-                    <th>Wiring</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -198,19 +244,15 @@ export function TemplatesPage() {
                       <tr key={t.id}>
                         <td>
                           <strong>{t.name}</strong>
-                          <p className="muted-xs truncate">{t.body}</p>
+                        </td>
+                        <td>
+                          <p className="template-preview-cell">
+                            {t.subject ? `${t.subject} — ` : ''}
+                            {t.body}
+                          </p>
                         </td>
                         <td>
                           <ChannelBadge channel={t.channel} />
-                        </td>
-                        <td>
-                          <div className="binding-pills">
-                            {t.bindings.map((b) => (
-                              <span key={b.slot} className="binding-pill">
-                                {'{{' + b.slot + '}}'}→{b.field.split('.').pop()}
-                              </span>
-                            ))}
-                          </div>
                         </td>
                         <td>
                           <TemplateStatusBadge status={t.status} />

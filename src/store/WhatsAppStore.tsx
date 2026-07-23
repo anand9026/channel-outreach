@@ -179,6 +179,14 @@ type Action =
       type: 'CREATE_COLLECTION'
       payload: { name: string; brandId: string | null; influencerIds: string[] }
     }
+  | {
+      type: 'LOG_WHATSAPP_SENDS'
+      payload: {
+        sends: Array<{ to: string; body: string; name?: string; wamid?: string }>
+        phoneNumberId?: string
+        campaignId?: string | null
+      }
+    }
 
 const initialState: AppState = {
   organization: seedOrganization,
@@ -1077,6 +1085,99 @@ function reducer(state: AppState, action: Action): AppState {
         selectedCampaignId: id,
       }
     }
+    case 'LOG_WHATSAPP_SENDS': {
+      const ts = nowIso()
+      let influencers = [...state.influencers]
+      let conversations = [...state.conversations]
+      let messages = [...state.messages]
+      const phoneNumberId =
+        action.payload.phoneNumberId || state.whatsAppNumbers[0]?.phoneNumberId
+      const campaignId = action.payload.campaignId ?? undefined
+      let selectedConversationId = state.selectedConversationId
+
+      for (const send of action.payload.sends) {
+        const phone = send.to.replace(/\D/g, '')
+        if (!phone) continue
+        let inf = influencers.find(
+          (i) => i.phone.replace(/\D/g, '') === phone || i.id === `ext_${phone}`,
+        )
+        if (!inf) {
+          inf = {
+            id: `ext_${phone}`,
+            name: send.name?.trim() || phone,
+            handle: '',
+            phone,
+            email: '',
+            followers: '—',
+            niche: 'External',
+          }
+          influencers.push(inf)
+        }
+        const convId = conversationKey(
+          ORG_ID,
+          'whatsapp',
+          phoneNumberId || 'wa_default',
+          inf.id,
+        )
+        const existing = conversations.find((c) => c.id === convId)
+        if (!existing) {
+          conversations.unshift({
+            id: convId,
+            organizationId: ORG_ID,
+            channel: 'whatsapp',
+            phoneNumberId,
+            influencerId: inf.id,
+            campaignIds: campaignId ? [campaignId] : [],
+            lastCampaignId: campaignId,
+            status: 'open',
+            lastMessageAt: ts,
+            unreadCount: 0,
+            lastPreview: send.body.slice(0, 80),
+          })
+        } else {
+          conversations = conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  lastMessageAt: ts,
+                  lastPreview: send.body.slice(0, 80),
+                  campaignIds:
+                    campaignId && !c.campaignIds.includes(campaignId)
+                      ? [...c.campaignIds, campaignId]
+                      : c.campaignIds,
+                  lastCampaignId: campaignId || c.lastCampaignId,
+                  status: 'open' as const,
+                }
+              : c,
+          )
+        }
+        const msgId = uid('msg')
+        messages.push({
+          id: msgId,
+          conversationId: convId,
+          organizationId: ORG_ID,
+          channel: 'whatsapp',
+          campaignId,
+          direction: 'outbound',
+          body: send.body,
+          status: 'sent',
+          isTemplate: true,
+          createdAt: ts,
+          metaMessageId: send.wamid || msgId,
+        })
+        selectedConversationId = convId
+      }
+
+      return {
+        ...state,
+        influencers,
+        conversations: conversations.sort((a, b) =>
+          b.lastMessageAt.localeCompare(a.lastMessageAt),
+        ),
+        messages,
+        selectedConversationId,
+      }
+    }
     case 'CREATE_COLLECTION': {
       const id = uid('col')
       const collection: CollectionList = {
@@ -1185,6 +1286,11 @@ interface StoreContextValue {
       name: string
       brandId: string | null
       influencerIds: string[]
+    }) => void
+    logWhatsAppSends: (payload: {
+      sends: Array<{ to: string; body: string; name?: string; wamid?: string }>
+      phoneNumberId?: string
+      campaignId?: string | null
     }) => void
   }
 }
@@ -1394,6 +1500,9 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       createCollection: (payload) => {
         dispatch({ type: 'CREATE_COLLECTION', payload })
         toast('Collection list created', 'success')
+      },
+      logWhatsAppSends: (payload) => {
+        dispatch({ type: 'LOG_WHATSAPP_SENDS', payload })
       },
     }),
     [

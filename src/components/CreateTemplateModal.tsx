@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
-import { VariableMapper } from './VariableMapper'
 import { ApiError, createWhatsAppTemplate } from '../lib/api'
+import { extractMetaSlots } from '../lib/templateSlots'
 import { toMetaBody, toMetaTemplateName } from '../lib/metaTemplate'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { OutreachChannel, TemplateCategory, VariableBinding } from '../types'
+import type { OutreachChannel, TemplateCategory } from '../types'
 
 const categories: TemplateCategory[] = ['MARKETING', 'UTILITY', 'AUTHENTICATION']
 
@@ -13,35 +13,24 @@ type Props = {
   onCreated: () => void
 }
 
+/**
+ * Template create = Meta script only (name, category, body, sample values).
+ * No brand / influencer / audience mapping here — that belongs at send time.
+ */
 export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
-  const { state, actions } = useWhatsAppStore()
-  const hasBrands = state.brands.length > 0
-
+  const { actions } = useWhatsAppStore()
   const [channel, setChannel] = useState<OutreachChannel>('whatsapp')
   const [name, setName] = useState('')
   const [category, setCategory] = useState<TemplateCategory>('UTILITY')
-  const [brandId, setBrandId] = useState('any')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('Hello {{1}}, thanks for connecting with us.')
-  const [bindings, setBindings] = useState<VariableBinding[]>([])
-  const [sample1, setSample1] = useState('Anand')
+  const [samples, setSamples] = useState<Record<string, string>>({ '1': 'Anand' })
   const [submitting, setSubmitting] = useState(false)
 
-  const previewCampaign = state.campaigns[0] ?? null
-  const previewBrand = previewCampaign?.brandId
-    ? state.brands.find((b) => b.id === previewCampaign.brandId) ?? null
-    : null
-  const previewInf = state.influencers[0] ?? null
-
-  const ctx = useMemo(
-    () => ({
-      org: state.organization,
-      brand: previewBrand,
-      campaign: previewCampaign,
-      influencer: previewInf,
-    }),
-    [state.organization, previewBrand, previewCampaign, previewInf],
-  )
+  const slots = useMemo(() => extractMetaSlots(body), [body])
+  const previewBody = useMemo(() => {
+    return body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => samples[n] || `{{${n}}}`)
+  }, [body, samples])
 
   if (!open) return null
 
@@ -49,7 +38,7 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     setName('')
     setBody('Hello {{1}}, thanks for connecting with us.')
     setSubject('')
-    setBindings([])
+    setSamples({ '1': 'Anand' })
     setChannel('whatsapp')
     setCategory('UTILITY')
   }
@@ -72,12 +61,10 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         return
       }
       const { text, examples } = toMetaBody(body.trim())
-      const exampleValues =
-        examples.length > 0
-          ? examples.map((ex, i) => (i === 0 && sample1.trim() ? sample1.trim() : ex))
-          : sample1.trim()
-            ? [sample1.trim()]
-            : undefined
+      const exampleValues = examples.map((ex, i) => {
+        const slot = String(i + 1)
+        return samples[slot]?.trim() || ex
+      })
 
       setSubmitting(true)
       try {
@@ -86,15 +73,15 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
           category,
           language: 'en_US',
           body: text,
-          exampleValues,
+          exampleValues: exampleValues.length ? exampleValues : undefined,
         })
         actions.submitTemplate({
           channel: 'whatsapp',
           name: metaName,
           category,
           body: text,
-          bindings,
-          brandId: brandId === 'any' ? null : brandId,
+          bindings: [],
+          brandId: null,
         })
         actions.toast(`Submitted ${metaName} to Meta`, 'success')
         reset()
@@ -125,8 +112,8 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
       category,
       subject: subject.trim(),
       body: body.trim(),
-      bindings,
-      brandId: brandId === 'any' ? null : brandId,
+      bindings: [],
+      brandId: null,
     })
     reset()
     onCreated()
@@ -138,7 +125,8 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
       <div className="modal modal-wide">
         <h3>Create template</h3>
         <p className="muted">
-          Meta templates only need body + samples. Map CSV / influencer fields later at send time.
+          Script for Meta approval only — name, category, body, samples. Map CSV / phones /
+          influencers later when you send.
         </p>
 
         <div className="stack gap-3" style={{ marginTop: 12 }}>
@@ -181,52 +169,49 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
                 ))}
               </select>
             </label>
-            <label className="field">
-              <span>Brand scope</span>
-              <select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
-                <option value="any">Any / org-level</option>
-                {state.brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {channel === 'whatsapp' ? (
-              <label className="field">
-                <span>Sample for {'{{1}}'} (Meta review)</span>
-                <input
-                  value={sample1}
-                  onChange={(e) => setSample1(e.target.value)}
-                  placeholder="Anand"
-                />
-              </label>
-            ) : null}
           </div>
 
-          {channel === 'whatsapp' ? (
+          {channel === 'email' ? (
             <label className="field">
-              <span>Body (use {'{{1}}'}, {'{{2}}'} … for variables)</span>
-              <textarea
-                rows={4}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-              />
+              <span>Subject</span>
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} />
             </label>
-          ) : (
-            <VariableMapper
-              body={body}
-              subject={subject}
-              showSubject
-              bindings={bindings}
-              ctx={ctx}
-              hasBrands={hasBrands}
-              onBodyChange={setBody}
-              onSubjectChange={setSubject}
-              onBindingsChange={setBindings}
-              compact
-            />
-          )}
+          ) : null}
+
+          <label className="field">
+            <span>
+              Body{channel === 'whatsapp' ? ' (use {{1}}, {{2}} …)' : ''}
+            </span>
+            <textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
+          </label>
+
+          {channel === 'whatsapp' && slots.length > 0 ? (
+            <div className="stack gap-2">
+              <p className="field-label">Sample values (required by Meta review)</p>
+              {slots.map((s) => (
+                <label key={s} className="field">
+                  <span>{`{{${s}}}`}</span>
+                  <input
+                    value={samples[s] ?? ''}
+                    onChange={(e) =>
+                      setSamples((prev) => ({ ...prev, [s]: e.target.value }))
+                    }
+                    placeholder={`Sample for {{${s}}}`}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="preview-box">
+            <p className="muted-xs">Preview with samples</p>
+            {channel === 'email' && subject ? (
+              <p>
+                <strong>{subject}</strong>
+              </p>
+            ) : null}
+            <p>{previewBody}</p>
+          </div>
         </div>
 
         <div className="modal-actions">

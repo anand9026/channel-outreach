@@ -43,9 +43,7 @@ export function SendWizard({ initialTemplateName }: Props) {
 
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [loadingTemplates, setLoadingTemplates] = useState(false)
-  const [templateName, setTemplateName] = useState(
-    initialTemplateName || 'hello_world',
-  )
+  const [templateName, setTemplateName] = useState(initialTemplateName || '')
   const [audience, setAudience] = useState<SendAudienceKind>('phones')
   const [slotMap, setSlotMap] = useState<SlotMap>({})
   const [literalBySlot, setLiteralBySlot] = useState<SlotMap>({})
@@ -70,10 +68,17 @@ export function SendWizard({ initialTemplateName }: Props) {
     void listWhatsAppTemplates({ limit: 50 })
       .then((list) => {
         if (cancelled) return
-        setMetaTemplates(list)
-        const approved = list.find((t) => t.status === 'APPROVED')
-        if (approved && !initialTemplateName) {
-          setTemplateName(approved.name)
+        const approvedOnly = list.filter((t) => t.status === 'APPROVED')
+        setMetaTemplates(approvedOnly)
+        if (initialTemplateName) {
+          const match = approvedOnly.find((t) => t.name === initialTemplateName)
+          setTemplateName(match?.name || approvedOnly[0]?.name || '')
+        } else {
+          setTemplateName((prev) =>
+            prev && approvedOnly.some((t) => t.name === prev)
+              ? prev
+              : approvedOnly[0]?.name || '',
+          )
         }
       })
       .catch((err) => {
@@ -94,8 +99,7 @@ export function SendWizard({ initialTemplateName }: Props) {
 
   const selectedMeta = metaTemplates.find((t) => t.name === templateName)
   const bodyText =
-    selectedMeta?.components?.find((c) => c.type === 'BODY')?.text ??
-    (templateName === 'hello_world' ? 'Hello World' : '')
+    selectedMeta?.components?.find((c) => c.type === 'BODY')?.text ?? ''
 
   const slots = useMemo(() => extractMetaSlots(bodyText), [bodyText])
 
@@ -256,23 +260,39 @@ export function SendWizard({ initialTemplateName }: Props) {
     let ok = 0
     let fail = 0
     try {
+      const logged: Array<{ to: string; body: string; wamid?: string }> = []
       for (const item of outbound) {
         try {
-          await sendWhatsAppTemplate({
+          const data = await sendWhatsAppTemplate({
             to: item.to,
             template_name: templateName.trim(),
             language_code: selectedMeta?.language || 'en_US',
             bodyParams: item.params.length ? item.params : undefined,
             phone_number_id: state.whatsAppNumbers[0]?.phoneNumberId,
           })
+          const wamid =
+            typeof data === 'object' &&
+            data &&
+            'messages' in data &&
+            Array.isArray((data as { messages?: { id?: string }[] }).messages)
+              ? (data as { messages: { id?: string }[] }).messages[0]?.id
+              : undefined
+          logged.push({ to: item.to, body: item.preview, wamid })
           ok++
         } catch {
           fail++
         }
       }
+      if (logged.length) {
+        actions.logWhatsAppSends({
+          sends: logged,
+          phoneNumberId: state.whatsAppNumbers[0]?.phoneNumberId,
+          campaignId,
+        })
+      }
       if (ok) {
         actions.toast(
-          `Sent ${ok} message(s)${fail ? ` · ${fail} failed` : ''}`,
+          `Sent ${ok} message(s)${fail ? ` · ${fail} failed` : ''} · check Inbox`,
           fail ? 'info' : 'success',
         )
         actions.setTab('inbox')
@@ -304,34 +324,43 @@ export function SendWizard({ initialTemplateName }: Props) {
       <div className="stack gap-4" style={{ marginTop: 12 }}>
         <div className="form-grid-2">
           <label className="field">
-            <span>Template</span>
+            <span>Approved template</span>
             <select
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
-              disabled={loadingTemplates}
+              disabled={loadingTemplates || metaTemplates.length === 0}
             >
-              <option value="hello_world">hello_world</option>
-              {metaTemplates.map((t) => (
-                <option key={t.id} value={t.name}>
-                  {t.name} · {t.status}
-                </option>
-              ))}
+              {metaTemplates.length === 0 ? (
+                <option value="">No APPROVED templates yet</option>
+              ) : (
+                metaTemplates.map((t) => (
+                  <option key={t.id} value={t.name}>
+                    {t.name} · {t.language} · {t.category}
+                  </option>
+                ))
+              )}
             </select>
           </label>
           <label className="field">
-            <span>Status</span>
+            <span>Meta status</span>
             <input
               readOnly
               value={
                 selectedMeta
                   ? `${selectedMeta.status} · ${selectedMeta.language} · ${selectedMeta.category}`
-                  : templateName === 'hello_world'
-                    ? 'Sandbox default'
-                    : '—'
+                  : loadingTemplates
+                    ? 'Loading…'
+                    : 'Create & approve a template first'
               }
             />
           </label>
         </div>
+        {selectedMeta ? (
+          <div className="preview-box">
+            <p className="muted-xs">Template preview (with mapped values below)</p>
+            <p>{bodyText || '—'}</p>
+          </div>
+        ) : null}
 
         {bodyText ? (
           <p className="muted-xs">

@@ -111,7 +111,8 @@ export function InboxPage() {
         <div className="inbox-list-head">
           <h3>Unified inbox</h3>
           <p className="muted-xs">
-            One chat per influencer + channel. Campaigns tag messages — not separate WA threads.
+            Threads appear after you send a template (Send wizard / Campaigns). Replies need
+            webhooks for live inbound — until then use Simulate reply in a thread.
           </p>
         </div>
 

@@ -904,6 +904,13 @@ tbody tr:hover {
   border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
 }
 
+.template-preview-cell {
+  max-width: 320px;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .segmented button {
   display: inline-flex;
   align-items: center;

@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FolderOpen, Mail, MessageCircle, Plus, Send, Users } from 'lucide-react'
 import { CascadeControls } from '../components/CascadeControls'
+import { SendWizard } from '../components/SendWizard'
 import { VariableMapper } from '../components/VariableMapper'
+import { listWhatsAppTemplates, type MetaTemplate } from '../lib/api'
 import { defaultCascadeOptions } from '../lib/cascade'
+import { extractMetaSlots, fillMetaBody } from '../lib/templateSlots'
 import {
   bindingToOverrideValue,
   mergeBindings,
+  resolveField,
 } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
-import type { AudienceSource, CascadeOptions, VariableBinding } from '../types'
+import type { AudienceSource, CascadeOptions, DataFieldKey, VariableBinding } from '../types'
 
 export function CampaignsPage() {
   const { state, actions } = useWhatsAppStore()
@@ -44,6 +48,20 @@ export function CampaignsPage() {
   const [audienceSource, setAudienceSource] = useState<AudienceSource>('collection')
   const [collectionId, setCollectionId] = useState(state.collections[0]?.id ?? '')
   const [pickedAudience, setPickedAudience] = useState<string[]>([])
+  const [createMetaTemplates, setCreateMetaTemplates] = useState<MetaTemplate[]>([])
+  const [createTemplateName, setCreateTemplateName] = useState('')
+
+  useEffect(() => {
+    void listWhatsAppTemplates({ limit: 50 })
+      .then((list) => {
+        const approved = list.filter((t) => t.status === 'APPROVED')
+        setCreateMetaTemplates(approved)
+        setCreateTemplateName((prev) => prev || approved[0]?.name || '')
+      })
+      .catch(() => {
+        setCreateMetaTemplates([])
+      })
+  }, [])
 
   const waChannel = useMemo(
     () => state.channels.find((ch) => ch.campaignId === campaignId && ch.channel === 'whatsapp'),
@@ -75,6 +93,60 @@ export function CampaignsPage() {
         .filter(Boolean) as typeof state.influencers,
     [audiencePoolIds, state.influencers],
   )
+
+  const createTemplate = createMetaTemplates.find((t) => t.name === createTemplateName)
+  const createTemplateBody =
+    createTemplate?.components?.find((c) => c.type === 'BODY')?.text ?? ''
+  const createPreviewInfluencerId =
+    (pickedAudience[0] || audiencePoolIds[0]) ?? state.influencers[0]?.id
+  const createPreviewInfluencer = state.influencers.find(
+    (i) => i.id === createPreviewInfluencerId,
+  )
+  const createCampaignPreview = useMemo(() => {
+    if (!createTemplateBody) return ''
+    const slots = extractMetaSlots(createTemplateBody)
+    const brandForPreview =
+      newBrandId === 'none'
+        ? null
+        : state.brands.find((b) => b.id === newBrandId) ?? null
+    const ctx = {
+      org: state.organization,
+      brand: brandForPreview,
+      campaign: {
+        id: 'preview',
+        organizationId: state.organization.id,
+        brandId: brandForPreview?.id ?? null,
+        name: newName.trim() || 'New outreach',
+        kind: 'outreach' as const,
+        status: 'draft' as const,
+        audienceSource,
+        collectionId: audienceSource === 'collection' ? collectionId : null,
+        influencerIds: [] as string[],
+        createdAt: '',
+      },
+      influencer: createPreviewInfluencer ?? null,
+    }
+    const values: Record<string, string> = {}
+    const defaults: DataFieldKey[] = [
+      'influencer.first_name',
+      'influencer.niche',
+      'brand.name',
+      'campaign.name',
+    ]
+    slots.forEach((s, i) => {
+      values[s] = resolveField(defaults[i] || 'literal', ctx, `value_${s}`)
+    })
+    return fillMetaBody(createTemplateBody, values)
+  }, [
+    createTemplateBody,
+    createPreviewInfluencer,
+    newBrandId,
+    newName,
+    audienceSource,
+    collectionId,
+    state.organization,
+    state.brands,
+  ])
 
   const campaignInfluencers = useMemo(() => {
     if (!campaign) return []
@@ -340,13 +412,15 @@ export function CampaignsPage() {
 
   return (
     <div className="page-grid">
+      <SendWizard />
+
       <section className="card create-outreach-card">
         <div className="row-between">
           <div>
             <h2>Create outreach campaign</h2>
             <p className="card-lead">
-              Outreach-only (not a full marketing campaign). Audience from a Reelax{' '}
-              <strong>collection list</strong> or <strong>My Creators</strong>.
+              Pick audience + optional WhatsApp template preview before you attach channels
+              and send.
             </p>
           </div>
           <button
@@ -380,7 +454,41 @@ export function CampaignsPage() {
                   ))}
                 </select>
               </label>
+              <label className="field">
+                <span>WhatsApp template (approved)</span>
+                <select
+                  value={createTemplateName}
+                  onChange={(e) => setCreateTemplateName(e.target.value)}
+                >
+                  {createMetaTemplates.length === 0 ? (
+                    <option value="">No approved templates</option>
+                  ) : (
+                    createMetaTemplates.map((t) => (
+                      <option key={t.id} value={t.name}>
+                        {t.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
             </div>
+
+            {createTemplateBody ? (
+              <div className="preview-box">
+                <p className="muted-xs">
+                  Message preview
+                  {createPreviewInfluencer
+                    ? ` · sample: ${createPreviewInfluencer.name}`
+                    : ''}
+                </p>
+                <p className="muted-xs">Template: {createTemplateName}</p>
+                <p>{createCampaignPreview || createTemplateBody}</p>
+              </div>
+            ) : (
+              <p className="muted-xs">
+                Approve a WhatsApp template first to see campaign message preview.
+              </p>
+            )}
 
             <div className="audience-source">
               <p className="var-palette-title">Audience source</p>
