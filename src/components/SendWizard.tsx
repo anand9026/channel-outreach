@@ -269,6 +269,7 @@ export function SendWizard({ initialTemplateName }: Props) {
             language_code: selectedMeta?.language || 'en_US',
             bodyParams: item.params.length ? item.params : undefined,
             phone_number_id: state.whatsAppNumbers[0]?.phoneNumberId,
+            preview_body: item.preview,
           })
           const wamid =
             typeof data === 'object' &&

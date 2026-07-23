@@ -79,6 +79,28 @@ export type ConnectionInfo = {
   waba_id: string | null
   graph_api_version: string
   has_access_token: boolean
+  webhook_verify_token_configured?: boolean
+}
+
+export type InboxThread = {
+  phone: string
+  display_name: string
+  phone_number_id: string | null
+  last_message_at: string
+  last_preview: string
+  last_inbound_at: string | null
+  unread_count: number
+}
+
+export type InboxMessage = {
+  id: string
+  phone: string
+  direction: 'inbound' | 'outbound'
+  body: string
+  is_template: boolean
+  wamid: string | null
+  status: string
+  created_at: string
 }
 
 export type MetaTemplate = {
@@ -187,6 +209,7 @@ export async function sendWhatsAppTemplate(input: {
   language_code?: string
   bodyParams?: string[]
   phone_number_id?: string
+  preview_body?: string
 }) {
   const components =
     input.bodyParams && input.bodyParams.length
@@ -211,8 +234,24 @@ export async function sendWhatsAppTemplate(input: {
         language_code: input.language_code || 'en_US',
         components,
         phone_number_id: input.phone_number_id,
+        preview_body: input.preview_body,
       }),
     },
   )
   return res.data
+}
+
+export async function listWhatsAppInbox() {
+  const res = await request<ApiSuccess<{ threads?: InboxThread[] }>>(
+    '/whatsapp-outreach/inbox',
+  )
+  return res.data?.threads ?? []
+}
+
+export async function getWhatsAppInboxMessages(phone: string) {
+  const q = new URLSearchParams({ phone: phone.replace(/\D/g, '') })
+  const res = await request<
+    ApiSuccess<{ phone?: string; messages?: InboxMessage[] }>
+  >(`/whatsapp-outreach/inbox/messages?${q}`)
+  return res.data?.messages ?? []
 }

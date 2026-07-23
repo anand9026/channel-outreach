@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Clock,
   Filter,
@@ -11,29 +11,114 @@ import {
   ConversationStatusBadge,
   DeliveryStatusBadge,
 } from '../components/StatusBadge'
+import {
+  getWhatsAppInboxMessages,
+  listWhatsAppInbox,
+  sendWhatsAppText,
+  type InboxMessage,
+  type InboxThread,
+} from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { OutreachChannel } from '../types'
+import type { DeliveryStatus, OutreachChannel } from '../types'
 
 const replyPresets = ['YES, interested!', 'Can you share the brief?', 'Not available this month.']
 
+function within24hOf(iso: string | null | undefined) {
+  if (!iso) return false
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return false
+  return Date.now() - t < 24 * 60 * 60 * 1000
+}
+
+function mapStatus(status: string): DeliveryStatus {
+  const s = status.toLowerCase()
+  if (
+    s === 'queued' ||
+    s === 'scheduled' ||
+    s === 'sent' ||
+    s === 'delivered' ||
+    s === 'read' ||
+    s === 'failed' ||
+    s === 'cancelled'
+  ) {
+    return s
+  }
+  if (s === 'received') return 'delivered'
+  return 'sent'
+}
+
 /**
- * Unified inbox (expert model):
- * - One thread per org · channel · account · influencer (WhatsApp reality)
- * - Messages tagged with campaignId so 2 campaigns → same influencer stay one chat
- * - Filter by channel and/or campaign; highlight campaign context in the thread
+ * Unified inbox:
+ * - WhatsApp threads/messages come from reelax-server (webhooks + outbound record)
+ * - Email / local demo threads stay in the browser store
  */
 export function InboxPage() {
   const { state, actions } = useWhatsAppStore()
   const [reply, setReply] = useState('')
-  const [channelFilter, setChannelFilter] = useState<'all' | OutreachChannel>('all')
+  const [channelFilter, setChannelFilter] = useState<'all' | OutreachChannel>('whatsapp')
   const [campaignFilter, setCampaignFilter] = useState<string>('all')
   const [query, setQuery] = useState('')
   const [highlightCampaign, setHighlightCampaign] = useState<string>('all')
+  const [liveThreads, setLiveThreads] = useState<InboxThread[]>([])
+  const [liveMessages, setLiveMessages] = useState<InboxMessage[]>([])
+  const [liveSelectedPhone, setLiveSelectedPhone] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [liveError, setLiveError] = useState<string | null>(null)
+
+  const refreshLiveThreads = useCallback(async () => {
+    try {
+      const threads = await listWhatsAppInbox()
+      setLiveThreads(threads)
+      setLiveError(null)
+    } catch (e) {
+      setLiveError(e instanceof Error ? e.message : 'Failed to load inbox')
+    }
+  }, [])
+
+  const refreshLiveMessages = useCallback(async (phone: string) => {
+    try {
+      const msgs = await getWhatsAppInboxMessages(phone)
+      setLiveMessages(msgs)
+    } catch {
+      // keep previous messages on transient errors
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshLiveThreads()
+    const id = window.setInterval(() => {
+      void refreshLiveThreads()
+    }, 4000)
+    return () => window.clearInterval(id)
+  }, [refreshLiveThreads])
+
+  useEffect(() => {
+    if (!liveSelectedPhone) {
+      setLiveMessages([])
+      return
+    }
+    void refreshLiveMessages(liveSelectedPhone)
+    const id = window.setInterval(() => {
+      void refreshLiveMessages(liveSelectedPhone)
+    }, 3000)
+    return () => window.clearInterval(id)
+  }, [liveSelectedPhone, refreshLiveMessages])
 
   const selectedId = state.selectedConversationId
-  const selected = state.conversations.find((c) => c.id === selectedId)
+  const selectedLocal = state.conversations.find((c) => c.id === selectedId)
+  const selectedLive = liveSelectedPhone
+    ? liveThreads.find((t) => t.phone === liveSelectedPhone) || {
+        phone: liveSelectedPhone,
+        display_name: liveSelectedPhone,
+        phone_number_id: null,
+        last_message_at: new Date().toISOString(),
+        last_preview: '',
+        last_inbound_at: null,
+        unread_count: 0,
+      }
+    : null
 
-  const sortedConversations = useMemo(() => {
+  const sortedLocal = useMemo(() => {
     let list = [...state.conversations]
     if (channelFilter !== 'all') {
       list = list.filter((c) => c.channel === channelFilter)
@@ -62,32 +147,86 @@ export function InboxPage() {
     query,
   ])
 
-  const thread = useMemo(() => {
-    if (!selected) return []
-    let msgs = state.messages
-      .filter((m) => m.conversationId === selected.id)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    if (highlightCampaign !== 'all') {
-      // Show all messages but we'll visually dim non-matching; keep full context
-      return msgs
+  const filteredLive = useMemo(() => {
+    if (channelFilter === 'email') return []
+    let list = [...liveThreads]
+    if (query.trim()) {
+      const q = query.trim().toLowerCase()
+      list = list.filter(
+        (t) =>
+          t.phone.includes(q) ||
+          t.display_name.toLowerCase().includes(q) ||
+          t.last_preview.toLowerCase().includes(q),
+      )
     }
-    return msgs
-  }, [state.messages, selected, highlightCampaign])
+    return list.sort((a, b) =>
+      String(b.last_message_at).localeCompare(String(a.last_message_at)),
+    )
+  }, [liveThreads, channelFilter, query])
 
-  const canReply = selected ? actions.canFreeformReply(selected.id) : false
-  const within24h = selected ? actions.isWithin24hWindow(selected.id) : false
-  const influencer = selected ? actions.getConversationInfluencer(selected) : undefined
+  // Prefer server WhatsApp threads; keep email (and local-only) from store
+  const showLiveWhatsApp = channelFilter === 'all' || channelFilter === 'whatsapp'
+  const showLocalEmail = channelFilter === 'all' || channelFilter === 'email'
+  const localEmailOnly = sortedLocal.filter((c) => c.channel === 'email')
+
+  const within24h = selectedLive
+    ? within24hOf(selectedLive.last_inbound_at)
+    : selectedLocal
+      ? actions.isWithin24hWindow(selectedLocal.id)
+      : false
+  const canReply = selectedLive
+    ? within24h
+    : selectedLocal
+      ? actions.canFreeformReply(selectedLocal.id)
+      : false
+
+  const influencer = selectedLocal
+    ? actions.getConversationInfluencer(selectedLocal)
+    : undefined
 
   const relatedCampaigns = useMemo(() => {
-    if (!selected) return []
-    return selected.campaignIds
+    if (!selectedLocal) return []
+    return selectedLocal.campaignIds
       .map((id) => state.campaigns.find((c) => c.id === id))
       .filter(Boolean) as typeof state.campaigns
-  }, [selected, state.campaigns])
+  }, [selectedLocal, state.campaigns])
 
-  const sendReply = () => {
-    if (!selected || !reply.trim()) return
-    const ok = actions.sendReply(selected.id, reply.trim())
+  const localThread = useMemo(() => {
+    if (!selectedLocal || liveSelectedPhone) return []
+    return state.messages
+      .filter((m) => m.conversationId === selectedLocal.id)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }, [state.messages, selectedLocal, liveSelectedPhone])
+
+  const sendReply = async () => {
+    if (!reply.trim()) return
+
+    if (liveSelectedPhone) {
+      if (!within24h) {
+        actions.toast('24-hour window closed — wait for inbound or send a template', 'error')
+        return
+      }
+      setSending(true)
+      try {
+        await sendWhatsAppText({
+          to: liveSelectedPhone,
+          text: reply.trim(),
+          phone_number_id: selectedLive?.phone_number_id || undefined,
+        })
+        setReply('')
+        actions.toast('Reply sent', 'success')
+        await refreshLiveMessages(liveSelectedPhone)
+        await refreshLiveThreads()
+      } catch (e) {
+        actions.toast(e instanceof Error ? e.message : 'Send failed', 'error')
+      } finally {
+        setSending(false)
+      }
+      return
+    }
+
+    if (!selectedLocal) return
+    const ok = actions.sendReply(selectedLocal.id, reply.trim())
     if (!ok) {
       actions.toast('24-hour window closed — send a template from Campaigns', 'error')
       return
@@ -97,13 +236,25 @@ export function InboxPage() {
   }
 
   const simulateReply = (body: string) => {
-    if (!selected) return
-    actions.simulateInbound(selected.id, body)
+    if (liveSelectedPhone) {
+      actions.toast(
+        'Simulate is local-only. For real inbound, configure Meta webhook → /whatsapp-outreach/webhook',
+        'info',
+      )
+      return
+    }
+    if (!selectedLocal) return
+    actions.simulateInbound(selectedLocal.id, body)
     actions.toast('Simulated inbound message', 'info')
   }
 
   const campaignName = (id?: string) =>
     id ? state.campaigns.find((c) => c.id === id)?.name ?? 'Campaign' : null
+
+  const hasAnyThread =
+    (showLiveWhatsApp && filteredLive.length > 0) ||
+    (showLocalEmail && localEmailOnly.length > 0) ||
+    (!showLiveWhatsApp && sortedLocal.length > 0)
 
   return (
     <div className="inbox-layout unified">
@@ -111,9 +262,11 @@ export function InboxPage() {
         <div className="inbox-list-head">
           <h3>Unified inbox</h3>
           <p className="muted-xs">
-            Threads appear after you send a template (Send wizard / Campaigns). Replies need
-            webhooks for live inbound — until then use Simulate reply in a thread.
+            WhatsApp threads load from the API after you send a template. Live replies need Meta
+            webhooks pointing at{' '}
+            <code>api.dev.getreelax.com/whatsapp-outreach/webhook</code>.
           </p>
+          {liveError ? <p className="muted-xs" style={{ color: 'var(--danger, #b91c1c)' }}>{liveError}</p> : null}
         </div>
 
         <label className="search-field">
@@ -155,77 +308,191 @@ export function InboxPage() {
           </select>
         </label>
 
-        {sortedConversations.length === 0 ? (
+        {!hasAnyThread ? (
           <p className="muted">No threads yet. Send from Home or Campaigns.</p>
         ) : (
           <ul className="conv-list">
-            {sortedConversations.map((c) => {
-              const inf = actions.getConversationInfluencer(c)
-              const camps = c.campaignIds
-                .map((id) => state.campaigns.find((x) => x.id === id)?.name)
-                .filter(Boolean)
-              return (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    className={`conv-item${c.id === selectedId ? ' active' : ''}`}
-                    onClick={() => {
-                      actions.selectConversation(c.id)
-                      setHighlightCampaign('all')
-                    }}
-                  >
-                    <div className="conv-head">
-                      <strong>{inf?.name ?? c.influencerId}</strong>
-                      {c.unreadCount > 0 ? (
-                        <span className="nav-badge">{c.unreadCount}</span>
-                      ) : null}
-                    </div>
-                    <div className="conv-meta-row">
-                      <ChannelBadge channel={c.channel} />
-                      <span className="muted-xs">
-                        {c.channel === 'email' ? inf?.email : inf?.phone}
-                      </span>
-                    </div>
-                    {c.lastPreview ? (
-                      <p className="conv-preview">{c.lastPreview}</p>
-                    ) : null}
-                    {camps.length > 0 ? (
-                      <div className="camp-tags">
-                        {camps.map((name) => (
-                          <span key={name} className="camp-tag">
-                            {name}
-                          </span>
-                        ))}
+            {showLiveWhatsApp
+              ? filteredLive.map((t) => (
+                  <li key={`live_${t.phone}`}>
+                    <button
+                      type="button"
+                      className={`conv-item${liveSelectedPhone === t.phone ? ' active' : ''}`}
+                      onClick={() => {
+                        setLiveSelectedPhone(t.phone)
+                        actions.selectConversation(null)
+                        setHighlightCampaign('all')
+                      }}
+                    >
+                      <div className="conv-head">
+                        <strong>{t.display_name || t.phone}</strong>
+                        {t.unread_count > 0 ? (
+                          <span className="nav-badge">{t.unread_count}</span>
+                        ) : null}
                       </div>
-                    ) : null}
-                    <ConversationStatusBadge status={c.status} />
-                  </button>
-                </li>
-              )
-            })}
+                      <div className="conv-meta-row">
+                        <ChannelBadge channel="whatsapp" />
+                        <span className="muted-xs">{t.phone}</span>
+                      </div>
+                      {t.last_preview ? (
+                        <p className="conv-preview">{t.last_preview}</p>
+                      ) : null}
+                      <ConversationStatusBadge status="open" />
+                    </button>
+                  </li>
+                ))
+              : null}
+
+            {(showLocalEmail ? localEmailOnly : channelFilter === 'email' ? sortedLocal : []).map(
+              (c) => {
+                const inf = actions.getConversationInfluencer(c)
+                const camps = c.campaignIds
+                  .map((id) => state.campaigns.find((x) => x.id === id)?.name)
+                  .filter(Boolean)
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      className={`conv-item${
+                        !liveSelectedPhone && c.id === selectedId ? ' active' : ''
+                      }`}
+                      onClick={() => {
+                        setLiveSelectedPhone(null)
+                        actions.selectConversation(c.id)
+                        setHighlightCampaign('all')
+                      }}
+                    >
+                      <div className="conv-head">
+                        <strong>{inf?.name ?? c.influencerId}</strong>
+                        {c.unreadCount > 0 ? (
+                          <span className="nav-badge">{c.unreadCount}</span>
+                        ) : null}
+                      </div>
+                      <div className="conv-meta-row">
+                        <ChannelBadge channel={c.channel} />
+                        <span className="muted-xs">
+                          {c.channel === 'email' ? inf?.email : inf?.phone}
+                        </span>
+                      </div>
+                      {c.lastPreview ? (
+                        <p className="conv-preview">{c.lastPreview}</p>
+                      ) : null}
+                      {camps.length > 0 ? (
+                        <div className="camp-tags">
+                          {camps.map((name) => (
+                            <span key={name} className="camp-tag">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <ConversationStatusBadge status={c.status} />
+                    </button>
+                  </li>
+                )
+              },
+            )}
           </ul>
         )}
       </aside>
 
       <section className="inbox-thread card">
-        {!selected ? (
+        {!selectedLive && !selectedLocal ? (
           <div className="empty-panel">
             <p>Select a conversation</p>
             <p className="muted-xs">
-              Tip: send the same influencer from two campaigns — you still get one WhatsApp chat,
-              with campaign labels on each message.
+              After Meta webhooks are configured, phone replies appear here automatically.
             </p>
           </div>
-        ) : (
+        ) : selectedLive ? (
+          <>
+            <div className="thread-header">
+              <div>
+                <h3>
+                  {selectedLive.display_name || selectedLive.phone}{' '}
+                  <ChannelBadge channel="whatsapp" />
+                </h3>
+                <p className="muted-xs">
+                  {selectedLive.phone}
+                  {' · '}
+                  live thread from server
+                </p>
+              </div>
+            </div>
+
+            <div className={`window-banner${within24h ? ' open' : ' closed'}`}>
+              <Clock size={16} />
+              {within24h
+                ? '24h window open — free-form replies allowed'
+                : '24h window closed — reply from phone (webhook) or send a template'}
+            </div>
+
+            <div className="message-thread">
+              {liveMessages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}
+                >
+                  <div className="msg-bubble whatsapp">
+                    <p className="msg-body-pre">{m.body}</p>
+                    <div className="msg-meta">
+                      <span>{new Date(m.created_at).toLocaleTimeString()}</span>
+                      {m.direction === 'outbound' ? (
+                        <DeliveryStatusBadge status={mapStatus(m.status)} />
+                      ) : null}
+                      {m.is_template ? <span className="muted-xs">template</span> : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="composer">
+              <div className="preset-row">
+                {replyPresets.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="chip"
+                    onClick={() => simulateReply(p)}
+                  >
+                    Simulate: {p.slice(0, 18)}…
+                  </button>
+                ))}
+              </div>
+              <div className="composer-row">
+                <input
+                  value={reply}
+                  onChange={(e) => setReply(e.target.value)}
+                  placeholder={
+                    canReply ? 'Type a reply…' : 'Window closed — inbound reply required first'
+                  }
+                  disabled={!canReply || sending}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void sendReply()
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn primary wa"
+                  disabled={!canReply || sending}
+                  onClick={() => void sendReply()}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </>
+        ) : selectedLocal ? (
           <>
             <div className="thread-header">
               <div>
                 <h3>
                   {influencer?.name}{' '}
-                  <ChannelBadge channel={selected.channel} />
+                  <ChannelBadge channel={selectedLocal.channel} />
                 </h3>
                 <p className="muted-xs">
-                  {selected.channel === 'email' ? influencer?.email : influencer?.phone}
+                  {selectedLocal.channel === 'email' ? influencer?.email : influencer?.phone}
                   {' · '}
                   {relatedCampaigns.length} campaign
                   {relatedCampaigns.length === 1 ? '' : 's'} in this thread
@@ -235,9 +502,12 @@ export function InboxPage() {
                 <label className="field inline">
                   <span>Assign</span>
                   <select
-                    value={selected.assignedTo ?? ''}
+                    value={selectedLocal.assignedTo ?? ''}
                     onChange={(e) =>
-                      actions.assignConversation(selected.id, e.target.value || undefined)
+                      actions.assignConversation(
+                        selectedLocal.id,
+                        e.target.value || undefined,
+                      )
                     }
                   >
                     <option value="">Unassigned</option>
@@ -248,11 +518,11 @@ export function InboxPage() {
                     ))}
                   </select>
                 </label>
-                {selected.status === 'resolved' ? (
+                {selectedLocal.status === 'resolved' ? (
                   <button
                     type="button"
                     className="btn secondary"
-                    onClick={() => actions.reopenConversation(selected.id)}
+                    onClick={() => actions.reopenConversation(selectedLocal.id)}
                   >
                     <RotateCcw size={14} /> Reopen
                   </button>
@@ -261,7 +531,7 @@ export function InboxPage() {
                     type="button"
                     className="btn secondary"
                     onClick={() => {
-                      actions.resolveConversation(selected.id)
+                      actions.resolveConversation(selectedLocal.id)
                       actions.toast('Conversation resolved', 'success')
                     }}
                   >
@@ -294,12 +564,12 @@ export function InboxPage() {
               </div>
             ) : null}
 
-            {selected.channel === 'whatsapp' ? (
+            {selectedLocal.channel === 'whatsapp' ? (
               <div className={`window-banner${within24h ? ' open' : ' closed'}`}>
                 <Clock size={16} />
                 {within24h
                   ? '24h window open — free-form replies allowed'
-                  : '24h window closed — simulate inbound or send a template'}
+                  : '24h window closed — use live WhatsApp list (API) or send a template'}
               </div>
             ) : (
               <div className="window-banner open email">
@@ -309,7 +579,7 @@ export function InboxPage() {
             )}
 
             <div className="message-thread">
-              {thread.map((m) => {
+              {localThread.map((m) => {
                 const dim =
                   highlightCampaign !== 'all' &&
                   m.campaignId &&
@@ -359,24 +629,24 @@ export function InboxPage() {
                   }
                   disabled={!canReply}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') sendReply()
+                    if (e.key === 'Enter') void sendReply()
                   }}
                 />
                 <button
                   type="button"
-                  className={`btn primary ${selected.channel === 'email' ? 'email' : 'wa'}`}
+                  className={`btn primary ${selectedLocal.channel === 'email' ? 'email' : 'wa'}`}
                   disabled={!canReply}
-                  onClick={sendReply}
+                  onClick={() => void sendReply()}
                 >
                   Send
                 </button>
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </section>
 
-      {selected && influencer ? (
+      {selectedLocal && influencer && !liveSelectedPhone ? (
         <aside className="inbox-context card">
           <h3>Context</h3>
           <div className="context-block">
@@ -389,46 +659,23 @@ export function InboxPage() {
           </div>
           <div className="context-block">
             <p className="context-label">Channel</p>
-            <ChannelBadge channel={selected.channel} />
+            <ChannelBadge channel={selectedLocal.channel} />
             <p className="muted-xs mono" style={{ marginTop: 8 }}>
-              {selected.id}
+              {selectedLocal.id}
             </p>
           </div>
           <div className="context-block">
             <p className="context-label">Campaigns in this chat</p>
             {relatedCampaigns.length === 0 ? (
-              <p className="muted-xs">No campaign sends yet</p>
+              <p className="muted-xs">No campaign tags</p>
             ) : (
-              <ul className="context-camps">
-                {relatedCampaigns.map((c) => {
-                  const count = state.messages.filter(
-                    (m) =>
-                      m.conversationId === selected.id &&
-                      m.campaignId === c.id &&
-                      m.direction === 'outbound',
-                  ).length
-                  return (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        className={highlightCampaign === c.id ? 'on' : ''}
-                        onClick={() =>
-                          setHighlightCampaign((prev) => (prev === c.id ? 'all' : c.id))
-                        }
-                      >
-                        <strong>{c.name}</strong>
-                        <span>{count} sends</span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
+              relatedCampaigns.map((c) => (
+                <p key={c.id} className="muted-xs">
+                  {c.name}
+                </p>
+              ))
             )}
           </div>
-          <p className="muted-xs context-note">
-            Why one thread? WhatsApp is number-to-number. Campaign B messaging the same creator
-            continues the same chat — we attribute each message to its campaign.
-          </p>
         </aside>
       ) : null}
     </div>
