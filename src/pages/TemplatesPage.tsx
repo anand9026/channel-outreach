@@ -33,6 +33,7 @@ export function TemplatesPage() {
 
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [metaLoading, setMetaLoading] = useState(false)
+  const [metaError, setMetaError] = useState<string | null>(null)
   const [metaSubmitting, setMetaSubmitting] = useState(false)
 
   const [sendTo, setSendTo] = useState('917706947747')
@@ -64,6 +65,7 @@ export function TemplatesPage() {
 
   const syncMetaTemplates = useCallback(async () => {
     setMetaLoading(true)
+    setMetaError(null)
     try {
       const list = await listWhatsAppTemplates({ limit: 50 })
       setMetaTemplates(list)
@@ -75,6 +77,10 @@ export function TemplatesPage() {
           : err instanceof Error
             ? err.message
             : 'Failed to sync templates'
+      setMetaTemplates([])
+      setMetaError(
+        `${message}. On the API server, set WHATSAPP_OUTREACH_ACCESS_TOKEN and restart.`,
+      )
       actions.toast(message, 'error')
     } finally {
       setMetaLoading(false)
@@ -228,7 +234,11 @@ export function TemplatesPage() {
                 <tr>
                   <td colSpan={4}>
                     <p className="muted">
-                      No templates yet (or API not deployed / token missing).
+                      {metaError
+                        ? metaError
+                        : metaLoading
+                          ? 'Loading templates…'
+                          : 'No templates yet.'}
                     </p>
                   </td>
                 </tr>

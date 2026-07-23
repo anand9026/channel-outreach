@@ -16,6 +16,24 @@ export class ApiError extends Error {
   }
 }
 
+function extractErrorMessage(json: unknown, fallback: string): string {
+  if (typeof json !== 'object' || !json) return fallback
+
+  const body = json as {
+    success?: boolean
+    err_l?: Array<{ m?: string; c?: string }>
+    error?: { message?: string }
+    message?: string
+  }
+
+  if (Array.isArray(body.err_l) && body.err_l[0]?.m) {
+    return body.err_l[0].m
+  }
+  if (body.error?.message) return body.error.message
+  if (typeof body.message === 'string') return body.message
+  return fallback
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit,
@@ -39,20 +57,18 @@ async function request<T>(
     }
   }
 
-  if (!res.ok) {
-    const msg =
-      typeof json === 'object' &&
-      json &&
-      'error' in json &&
-      typeof (json as { error?: { message?: string } }).error?.message === 'string'
-        ? (json as { error: { message: string } }).error.message
-        : typeof json === 'object' &&
-            json &&
-            'message' in json &&
-            typeof (json as { message?: string }).message === 'string'
-          ? (json as { message: string }).message
-          : `Request failed (${res.status})`
-    throw new ApiError(msg, res.status, json)
+  const apiFailed =
+    typeof json === 'object' &&
+    json !== null &&
+    'success' in json &&
+    (json as { success?: boolean }).success === false
+
+  if (!res.ok || apiFailed) {
+    throw new ApiError(
+      extractErrorMessage(json, `Request failed (${res.status})`),
+      res.status,
+      json,
+    )
   }
 
   return json as T
