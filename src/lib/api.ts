@@ -97,10 +97,19 @@ export type InboxMessage = {
   phone: string
   direction: 'inbound' | 'outbound'
   body: string
+  message_type?: string
+  media_id?: string | null
+  mime_type?: string | null
+  caption?: string | null
+  emoji?: string | null
   is_template: boolean
   wamid: string | null
   status: string
   created_at: string
+}
+
+export function whatsappMediaUrl(mediaId: string) {
+  return `${API_BASE_URL}/whatsapp-outreach/media/${encodeURIComponent(mediaId)}`
 }
 
 export type MetaTemplate = {

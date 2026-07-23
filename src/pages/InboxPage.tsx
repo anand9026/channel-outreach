@@ -15,6 +15,7 @@ import {
   getWhatsAppInboxMessages,
   listWhatsAppInbox,
   sendWhatsAppText,
+  whatsappMediaUrl,
   type InboxMessage,
   type InboxThread,
 } from '../lib/api'
@@ -427,23 +428,53 @@ export function InboxPage() {
             </div>
 
             <div className="message-thread">
-              {liveMessages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}
-                >
-                  <div className="msg-bubble whatsapp">
-                    <p className="msg-body-pre">{m.body}</p>
-                    <div className="msg-meta">
-                      <span>{new Date(m.created_at).toLocaleTimeString()}</span>
-                      {m.direction === 'outbound' ? (
-                        <DeliveryStatusBadge status={mapStatus(m.status)} />
+              {liveMessages.map((m) => {
+                const isMedia =
+                  Boolean(m.media_id) &&
+                  (m.message_type === 'image' ||
+                    m.message_type === 'sticker' ||
+                    (m.mime_type || '').startsWith('image/'))
+                const isReaction = m.message_type === 'reaction' || Boolean(m.emoji)
+                return (
+                  <div
+                    key={m.id}
+                    className={`msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}
+                  >
+                    <div className={`msg-bubble whatsapp${isReaction ? ' reaction' : ''}`}>
+                      {isMedia && m.media_id ? (
+                        <a
+                          href={whatsappMediaUrl(m.media_id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="msg-media-link"
+                        >
+                          <img
+                            className={`msg-media${m.message_type === 'sticker' ? ' sticker' : ''}`}
+                            src={whatsappMediaUrl(m.media_id)}
+                            alt={m.caption || m.body || 'media'}
+                            loading="lazy"
+                          />
+                        </a>
                       ) : null}
-                      {m.is_template ? <span className="muted-xs">template</span> : null}
+                      {isReaction ? (
+                        <p className="msg-emoji">{m.emoji || m.body}</p>
+                      ) : m.caption || (!isMedia && m.body) ? (
+                        <p className="msg-body-pre">{m.caption || m.body}</p>
+                      ) : null}
+                      <div className="msg-meta">
+                        <span>{new Date(m.created_at).toLocaleTimeString()}</span>
+                        {m.direction === 'outbound' ? (
+                          <DeliveryStatusBadge status={mapStatus(m.status)} />
+                        ) : null}
+                        {m.is_template ? <span className="muted-xs">template</span> : null}
+                        {m.message_type && m.message_type !== 'text' ? (
+                          <span className="muted-xs">{m.message_type}</span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             <div className="composer">

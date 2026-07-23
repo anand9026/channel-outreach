@@ -1612,6 +1612,35 @@ tbody tr:hover {
 
 .msg-body-pre {
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-media-link {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.msg-media {
+  display: block;
+  max-width: min(280px, 70vw);
+  max-height: 320px;
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.msg-media.sticker {
+  max-width: 140px;
+  max-height: 140px;
+  background: transparent;
+}
+
+.msg-emoji {
+  font-size: 2rem;
+  line-height: 1.2;
+  margin: 0;
 }
 
 .channel-metrics {
