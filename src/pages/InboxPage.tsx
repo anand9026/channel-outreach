@@ -343,8 +343,7 @@ export function InboxPage() {
                 ))
               : null}
 
-            {(showLocalEmail ? localEmailOnly : channelFilter === 'email' ? sortedLocal : []).map(
-              (c) => {
+            {(showLocalEmail ? localEmailOnly : []).map((c) => {
                 const inf = actions.getConversationInfluencer(c)
                 const camps = c.campaignIds
                   .map((id) => state.campaigns.find((x) => x.id === id)?.name)
