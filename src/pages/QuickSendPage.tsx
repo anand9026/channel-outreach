@@ -1,13 +1,18 @@
 import {
   AlertCircle,
+  Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Clock,
   Download,
   History,
   Loader2,
+  Pause,
+  Play,
   RefreshCw,
   Send,
+  Square,
   Trash2,
   Upload,
   X,
@@ -42,25 +47,36 @@ type Recipient = {
  */
 type VarBinding = { source: 'literal'; value: string } | { source: 'column'; column: string }
 
-/** A saved historical send batch. */
+/** Historical / scheduled send batch. */
 type SendBatch = {
   id: string
   createdAt: string
   templateId: string
   templateName: string
+  templateLanguage?: string
   phoneDisplay: string
   phoneNumberId: string
   totalCount: number
   sentCount: number
   failedCount: number
+  /** ISO timestamp — present when batch was scheduled */
+  scheduledFor?: string
+  /** completed | scheduled | cancelled | missed */
+  status?: 'completed' | 'scheduled' | 'cancelled' | 'missed'
+  /** Full body text + variable bindings — needed to actually send when the schedule fires */
+  bodyText?: string
+  bindings?: Record<string, VarBinding>
+  slots?: string[]
   recipients: Array<
-    Omit<Recipient, 'status'> & { status: 'sent' | 'failed'; body: string }
+    Omit<Recipient, 'status'> & { status: 'sent' | 'failed' | 'queued'; body: string }
   >
 }
 
 const STORAGE_KEY = 'rx-quicksend-v2'
 const BATCHES_KEY = 'rx-quicksend-batches-v1'
 const MAX_BATCHES = 20
+const RATE_LIMIT_MS = 250
+const RATE_LIMIT_THRESHOLD = 50
 
 type PersistedState = {
   templateId: string
@@ -105,13 +121,26 @@ function saveBatches(batches: SendBatch[]) {
   }
 }
 
-/* ---------------- CSV export ---------------- */
-function csvEscape(v: string): string {
-  if (v == null) return ''
-  const s = String(v)
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
-  return s
+/* ---------------- Helpers ---------------- */
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/** Returns a `yyyy-MM-ddTHH:mm` local string 15 min in the future (shape `<input type="datetime-local">` expects). */
+function defaultScheduleValue(): string {
+  const d = new Date(Date.now() + 15 * 60 * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+function formatSchedule(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleString('en', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 
 function downloadResultsCsv(
   batch: SendBatch | { templateName: string; recipients: SendBatch['recipients']; createdAt: string },
@@ -240,6 +269,16 @@ export function QuickSendPage() {
   const [restored, setRestored] = useState(false)
   const [batches, setBatches] = useState<SendBatch[]>([])
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null)
+  const [paused, setPaused] = useState(false)
+  const controllerRef = useRef<{ paused: boolean; cancelled: boolean }>({
+    paused: false,
+    cancelled: false,
+  })
+  const scheduleTimers = useRef<Record<string, number>>({})
+
+  // Schedule state
+  const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now')
+  const [scheduledFor, setScheduledFor] = useState<string>(defaultScheduleValue())
 
   // -------- Restore from localStorage on mount --------
   useEffect(() => {
@@ -391,8 +430,34 @@ export function QuickSendPage() {
   const canSend =
     mode !== 'none' && selectedPhoneNumberId && templateId && recipients.length > 0 && !sending
 
+  const throttleMs = recipients.length > RATE_LIMIT_THRESHOLD ? RATE_LIMIT_MS : 0
+
+  /** Wait while paused; return true if cancelled. */
+  const gate = async (): Promise<boolean> => {
+    while (controllerRef.current.paused && !controllerRef.current.cancelled) {
+      await sleep(150)
+    }
+    return controllerRef.current.cancelled
+  }
+
+  const pauseRun = () => {
+    controllerRef.current.paused = true
+    setPaused(true)
+  }
+  const resumeRun = () => {
+    controllerRef.current.paused = false
+    setPaused(false)
+  }
+  const stopRun = () => {
+    controllerRef.current.cancelled = true
+    controllerRef.current.paused = false
+    setPaused(false)
+  }
+
   const runSend = async () => {
     if (!canSend || !selectedTemplate) return
+    controllerRef.current = { paused: false, cancelled: false }
+    setPaused(false)
     setSending(true)
     setProgress({ done: 0, total: recipients.length })
     const initial = recipients.map((r) => ({ ...r, status: 'queued' as SendStatus, error: undefined }))
@@ -402,8 +467,33 @@ export function QuickSendPage() {
     // Per-recipient result rows for the batch snapshot
     const batchResults: SendBatch['recipients'] = []
     let doneCount = 0
+    let stoppedEarly = false
 
     for (let i = 0; i < initial.length; i++) {
+      // Honour pause/stop between recipients
+      if (await gate()) {
+        stoppedEarly = true
+        // Mark remaining recipients as failed (cancelled)
+        for (let j = i; j < initial.length; j++) {
+          const rr = initial[j]
+          setRecipients((prev) =>
+            prev.map((x, idx) =>
+              idx === j ? { ...x, status: 'failed', error: 'Cancelled' } : x,
+            ),
+          )
+          const preview = renderBody(bodyText, bindings, rr.row)
+          batchResults.push({
+            phone: rr.phone,
+            name: rr.name,
+            row: rr.row,
+            status: 'failed',
+            error: 'Cancelled',
+            body: preview,
+          })
+        }
+        break
+      }
+
       const r = initial[i]
       setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'sending' } : x)))
 
@@ -446,6 +536,11 @@ export function QuickSendPage() {
       }
       doneCount += 1
       setProgress({ done: doneCount, total: initial.length })
+
+      // Rate limit between sends (only for batches > threshold)
+      if (throttleMs > 0 && i < initial.length - 1) {
+        await sleep(throttleMs)
+      }
     }
 
     if (successful.length > 0) {
@@ -457,32 +552,167 @@ export function QuickSendPage() {
     }
 
     // Save the batch to history
+    const failedCount = batchResults.filter((r) => r.status === 'failed').length
     const newBatch: SendBatch = {
       id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
       templateId: selectedTemplate.id,
       templateName: selectedTemplate.name,
+      templateLanguage: selectedTemplate.language || 'en_US',
       phoneDisplay: waNumbers.find((n) => n.phoneNumberId === selectedPhoneNumberId)?.phoneDisplay || '',
       phoneNumberId: selectedPhoneNumberId,
-      totalCount: initial.length,
+      totalCount: batchResults.length,
       sentCount: successful.length,
-      failedCount: initial.length - successful.length,
+      failedCount,
+      status: stoppedEarly ? 'cancelled' : 'completed',
       recipients: batchResults,
     }
-    const updated = [newBatch, ...batches].slice(0, MAX_BATCHES)
+    const updated = [newBatch, ...batches.filter((b) => b.status !== 'scheduled' || b.id !== newBatch.id)]
+      .slice(0, MAX_BATCHES)
     setBatches(updated)
     saveBatches(updated)
     setExpandedBatch(newBatch.id)
 
     setSending(false)
-    const failed = initial.length - successful.length
+    controllerRef.current = { paused: false, cancelled: false }
     actions.toast(
-      failed === 0
-        ? `All ${successful.length} messages sent`
-        : `Sent ${successful.length}, failed ${failed}`,
-      failed === 0 ? 'success' : 'info',
+      stoppedEarly
+        ? `Stopped. ${successful.length} sent, ${failedCount - (initial.length - doneCount)} failed, ${initial.length - doneCount} cancelled.`
+        : failedCount === 0
+          ? `All ${successful.length} messages sent`
+          : `Sent ${successful.length}, failed ${failedCount}`,
+      stoppedEarly ? 'info' : failedCount === 0 ? 'success' : 'info',
     )
   }
+
+  /* ---------------- Scheduling ---------------- */
+
+  /** Save a scheduled batch and register a timer to fire it. */
+  const scheduleBatch = () => {
+    if (!selectedTemplate || recipients.length === 0) return
+    const scheduledAt = new Date(scheduledFor)
+    if (isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
+      actions.toast('Pick a time in the future', 'error')
+      return
+    }
+    const iso = scheduledAt.toISOString()
+    const batch: SendBatch = {
+      id: `batch_sched_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: new Date().toISOString(),
+      scheduledFor: iso,
+      status: 'scheduled',
+      templateId: selectedTemplate.id,
+      templateName: selectedTemplate.name,
+      templateLanguage: selectedTemplate.language || 'en_US',
+      phoneDisplay: waNumbers.find((n) => n.phoneNumberId === selectedPhoneNumberId)?.phoneDisplay || '',
+      phoneNumberId: selectedPhoneNumberId,
+      totalCount: recipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      bodyText,
+      bindings,
+      slots,
+      recipients: recipients.map((r) => ({
+        phone: r.phone,
+        name: r.name,
+        row: r.row,
+        status: 'queued',
+        body: renderBody(bodyText, bindings, r.row),
+      })),
+    }
+    const updated = [batch, ...batches].slice(0, MAX_BATCHES)
+    setBatches(updated)
+    saveBatches(updated)
+    setExpandedBatch(batch.id)
+    armTimer(batch)
+    actions.toast(`Scheduled for ${formatSchedule(iso)}`, 'success')
+    // Clear current recipients so user knows it's queued
+    setRecipients([])
+  }
+
+  const cancelScheduled = (id: string) => {
+    const t = scheduleTimers.current[id]
+    if (t) {
+      window.clearTimeout(t)
+      delete scheduleTimers.current[id]
+    }
+    const updated = batches.map((b) => (b.id === id ? { ...b, status: 'cancelled' as const } : b))
+    setBatches(updated)
+    saveBatches(updated)
+    actions.toast('Scheduled batch cancelled', 'info')
+  }
+
+  /** Execute a saved scheduled batch: run all recipients using its embedded config. */
+  const executeScheduledBatch = async (batchId: string) => {
+    const batch = batches.find((b) => b.id === batchId)
+    if (!batch || batch.status !== 'scheduled') return
+    const template = templates.find((t) => t.id === batch.templateId)
+    if (!template) {
+      // Template no longer available — mark missed
+      const updated = batches.map((b) =>
+        b.id === batchId ? { ...b, status: 'missed' as const } : b,
+      )
+      setBatches(updated)
+      saveBatches(updated)
+      actions.toast(`Scheduled batch skipped — template unavailable`, 'error')
+      return
+    }
+    // Load the recipients into the page & runSend
+    const restored: Recipient[] = batch.recipients.map((r) => ({
+      phone: r.phone,
+      name: r.name,
+      row: r.row,
+      status: 'idle',
+    }))
+    setTemplateId(batch.templateId)
+    setBindings(batch.bindings ?? {})
+    setRecipients(restored)
+    // Remove the scheduled batch entry — a completed one will be added by runSend
+    const updated = batches.filter((b) => b.id !== batchId)
+    setBatches(updated)
+    saveBatches(updated)
+    // Kick off the send on next tick so state settles
+    setTimeout(() => void runSend(), 100)
+  }
+
+  const armTimer = (batch: SendBatch) => {
+    if (!batch.scheduledFor) return
+    const delay = new Date(batch.scheduledFor).getTime() - Date.now()
+    if (delay <= 0) {
+      // Fire immediately (missed)
+      void executeScheduledBatch(batch.id)
+      return
+    }
+    // Cap at ~2 hours per timer (browsers throttle long timers)
+    const capped = Math.min(delay, 2 * 60 * 60 * 1000)
+    scheduleTimers.current[batch.id] = window.setTimeout(() => {
+      const b = loadBatches().find((x) => x.id === batch.id)
+      if (b && b.status === 'scheduled') {
+        if (new Date(b.scheduledFor!).getTime() <= Date.now() + 1000) {
+          void executeScheduledBatch(b.id)
+        } else {
+          armTimer(b)
+        }
+      }
+    }, capped)
+  }
+
+  // On mount & when batches change, arm timers for scheduled batches with no timer set
+  useEffect(() => {
+    if (!restored) return
+    for (const b of batches) {
+      if (b.status === 'scheduled' && !scheduleTimers.current[b.id]) {
+        armTimer(b)
+      }
+    }
+    return () => {
+      for (const id in scheduleTimers.current) {
+        window.clearTimeout(scheduleTimers.current[id])
+      }
+      scheduleTimers.current = {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restored, batches.length])
 
   const totalSent = recipients.filter((r) => r.status === 'sent').length
   const totalFailed = recipients.filter((r) => r.status === 'failed').length
@@ -515,13 +745,21 @@ export function QuickSendPage() {
           <button
             type="button"
             className="rx-btn accent"
-            onClick={() => void runSend()}
+            onClick={() => {
+              if (scheduleMode === 'later') scheduleBatch()
+              else void runSend()
+            }}
             disabled={!canSend}
             data-testid="quicksend-send"
           >
             {sending ? (
               <>
                 <Loader2 size={14} className="rx-spin" /> Sending {progress.done}/{progress.total}
+              </>
+            ) : scheduleMode === 'later' ? (
+              <>
+                <Calendar size={14} /> Schedule for {recipients.length || 0} number
+                {recipients.length === 1 ? '' : 's'}
               </>
             ) : (
               <>
@@ -558,6 +796,118 @@ export function QuickSendPage() {
           </div>
         )}
       </div>
+
+      {/* Timing (Send now / Schedule) */}
+      <div className="rx-card compact rx-mb-4" data-testid="quicksend-timing">
+        <div className="rx-row" style={{ justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="rx-label" style={{ marginBottom: 6 }}>
+              Timing
+            </div>
+            <div className="rx-seg">
+              <button
+                className={`rx-seg-btn${scheduleMode === 'now' ? ' is-active' : ''}`}
+                onClick={() => setScheduleMode('now')}
+                data-testid="timing-now"
+              >
+                <Send size={12} style={{ display: 'inline', verticalAlign: -1, marginRight: 4 }} />
+                Send now
+              </button>
+              <button
+                className={`rx-seg-btn${scheduleMode === 'later' ? ' is-active' : ''}`}
+                onClick={() => setScheduleMode('later')}
+                data-testid="timing-later"
+              >
+                <Calendar
+                  size={12}
+                  style={{ display: 'inline', verticalAlign: -1, marginRight: 4 }}
+                />
+                Schedule for later
+              </button>
+            </div>
+          </div>
+          {scheduleMode === 'later' && (
+            <div style={{ flex: 1 }}>
+              <div className="rx-label" style={{ marginBottom: 6 }}>
+                When
+              </div>
+              <input
+                type="datetime-local"
+                className="rx-input"
+                value={scheduledFor}
+                onChange={(e) => setScheduledFor(e.target.value)}
+                data-testid="quicksend-schedule-time"
+              />
+            </div>
+          )}
+        </div>
+        {recipients.length > RATE_LIMIT_THRESHOLD && (
+          <div className="rx-help rx-mt-2">
+            <Clock size={12} style={{ display: 'inline', verticalAlign: -1, marginRight: 4 }} />
+            Batches over {RATE_LIMIT_THRESHOLD} recipients auto-throttle to {RATE_LIMIT_MS}ms
+            between sends to respect Meta&rsquo;s messaging tier limits.
+          </div>
+        )}
+      </div>
+
+      {/* Send controller (pause / resume / stop) */}
+      {sending && (
+        <div
+          className="rx-card compact rx-mb-4"
+          style={{
+            borderColor: 'var(--accent)',
+            background: 'var(--accent-soft)',
+          }}
+          data-testid="send-controller"
+        >
+          <div className="rx-row" style={{ justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {paused ? 'Paused' : 'Sending'} — {progress.done} of {progress.total}
+              </div>
+              <div className="rx-text-xs rx-muted" style={{ marginTop: 2 }}>
+                {throttleMs > 0 ? `Throttled ${throttleMs}ms between sends` : 'No throttle'}
+              </div>
+            </div>
+            <div className="rx-row" style={{ gap: 6 }}>
+              {paused ? (
+                <button
+                  type="button"
+                  className="rx-btn primary sm"
+                  onClick={resumeRun}
+                  data-testid="controller-resume"
+                >
+                  <Play size={12} /> Resume
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="rx-btn secondary sm"
+                  onClick={pauseRun}
+                  data-testid="controller-pause"
+                >
+                  <Pause size={12} /> Pause
+                </button>
+              )}
+              <button
+                type="button"
+                className="rx-btn danger sm"
+                onClick={stopRun}
+                data-testid="controller-stop"
+              >
+                <Square size={12} /> Stop
+              </button>
+            </div>
+          </div>
+          <div className="rx-progress rx-mt-2" style={{ width: '100%' }}>
+            <span
+              style={{
+                width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="rx-split" style={{ gridTemplateColumns: '1fr 1fr' }}>
         {/* -------- Recipients -------- */}
@@ -787,16 +1137,26 @@ export function QuickSendPage() {
         expandedId={expandedBatch}
         onToggle={(id) => setExpandedBatch(expandedBatch === id ? null : id)}
         onClearAll={() => {
+          // Clear any active schedule timers first
+          for (const id in scheduleTimers.current) {
+            window.clearTimeout(scheduleTimers.current[id])
+          }
+          scheduleTimers.current = {}
           setBatches([])
           saveBatches([])
           setExpandedBatch(null)
         }}
         onDelete={(id) => {
+          if (scheduleTimers.current[id]) {
+            window.clearTimeout(scheduleTimers.current[id])
+            delete scheduleTimers.current[id]
+          }
           const next = batches.filter((b) => b.id !== id)
           setBatches(next)
           saveBatches(next)
           if (expandedBatch === id) setExpandedBatch(null)
         }}
+        onCancelSchedule={cancelScheduled}
       />
     </div>
   )
@@ -933,12 +1293,14 @@ function RecentBatches({
   onToggle,
   onClearAll,
   onDelete,
+  onCancelSchedule,
 }: {
   batches: SendBatch[]
   expandedId: string | null
   onToggle: (id: string) => void
   onClearAll: () => void
   onDelete: (id: string) => void
+  onCancelSchedule: (id: string) => void
 }) {
   if (batches.length === 0) return null
   return (
@@ -969,6 +1331,7 @@ function RecentBatches({
             expanded={expandedId === b.id}
             onToggle={() => onToggle(b.id)}
             onDelete={() => onDelete(b.id)}
+            onCancelSchedule={() => onCancelSchedule(b.id)}
           />
         ))}
       </div>
@@ -981,14 +1344,19 @@ function BatchRow({
   expanded,
   onToggle,
   onDelete,
+  onCancelSchedule,
 }: {
   batch: SendBatch
   expanded: boolean
   onToggle: () => void
   onDelete: () => void
+  onCancelSchedule: () => void
 }) {
   const when = new Date(batch.createdAt)
   const timeAgo = formatRelative(when)
+  const isScheduled = batch.status === 'scheduled'
+  const isCancelled = batch.status === 'cancelled'
+  const isMissed = batch.status === 'missed'
   return (
     <div className="rx-card compact" style={{ padding: 0 }} data-testid={`batch-${batch.id}`}>
       <div
@@ -1016,30 +1384,61 @@ function BatchRow({
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="rx-row" style={{ gap: 8 }}>
               <strong style={{ fontSize: 14 }}>{batch.templateName}</strong>
-              <span className="rx-badge">{batch.sentCount} sent</span>
-              {batch.failedCount > 0 && (
-                <span className="rx-badge danger">{batch.failedCount} failed</span>
+              {isScheduled && (
+                <span className="rx-badge info">
+                  <Calendar size={11} /> Scheduled
+                </span>
               )}
-              {batch.sentCount > 0 && batch.failedCount === 0 && (
-                <span className="rx-badge success">All delivered</span>
+              {isCancelled && <span className="rx-badge">Cancelled</span>}
+              {isMissed && <span className="rx-badge danger">Missed</span>}
+              {!isScheduled && !isCancelled && !isMissed && (
+                <>
+                  <span className="rx-badge">{batch.sentCount} sent</span>
+                  {batch.failedCount > 0 && (
+                    <span className="rx-badge danger">{batch.failedCount} failed</span>
+                  )}
+                  {batch.sentCount > 0 && batch.failedCount === 0 && (
+                    <span className="rx-badge success">All delivered</span>
+                  )}
+                </>
               )}
             </div>
             <div className="rx-text-xs rx-muted" style={{ marginTop: 3 }}>
-              {timeAgo} · from <span className="mono">{batch.phoneDisplay}</span>
-              {' · '}
-              {batch.totalCount} total
+              {isScheduled && batch.scheduledFor ? (
+                <>
+                  Fires <strong>{formatSchedule(batch.scheduledFor)}</strong> · from{' '}
+                  <span className="mono">{batch.phoneDisplay}</span> · {batch.totalCount} queued
+                </>
+              ) : (
+                <>
+                  {timeAgo} · from <span className="mono">{batch.phoneDisplay}</span>
+                  {' · '}
+                  {batch.totalCount} total
+                </>
+              )}
             </div>
           </div>
         </div>
         <div className="rx-row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="rx-btn secondary sm"
-            onClick={() => downloadResultsCsv(batch)}
-            data-testid={`batch-export-${batch.id}`}
-          >
-            <Download size={12} /> Export CSV
-          </button>
+          {isScheduled ? (
+            <button
+              type="button"
+              className="rx-btn danger sm"
+              onClick={onCancelSchedule}
+              data-testid={`batch-cancel-${batch.id}`}
+            >
+              <X size={12} /> Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="rx-btn secondary sm"
+              onClick={() => downloadResultsCsv(batch)}
+              data-testid={`batch-export-${batch.id}`}
+            >
+              <Download size={12} /> Export CSV
+            </button>
+          )}
           <button
             type="button"
             className="rx-icon-btn"

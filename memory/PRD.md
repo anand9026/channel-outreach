@@ -1,76 +1,62 @@
-# Reelax Outreach — Full v2 + Quick Send suite
+# Reelax Outreach — Complete v2 + Quick Send Pro
 
-## Product scope delivered
-End-to-end SaaS UX for creator outreach — designed & shipped in this session:
-- Onboarding sheet (first-run WA/Email connect + demo-data skip)
-- 5-item primary nav: Campaigns · Quick Send · Inbox · Messages · Results
-- Settings drawer (Channels · Brands · Team) — not in top nav
-- SendDrawer wizard (4-step canonical send flow for campaigns)
-- Campaigns hub + Campaign detail
-- Unified Inbox with 24h-window awareness
-- Merged Messages (WA templates + email scripts) library with create-modal
-- Results page (per-channel + per-campaign analytics)
-- **Quick Send sandbox** with paste + CSV upload + variable auto-mapping
-- **Send batch history + CSV export** — production-grade audit trail
-- **Full localStorage persistence** — store + Quick Send state
+## New capabilities in this iteration
+### Scheduled sends
+- Timing card: **Send now** | **Schedule for later** segmented control
+- When "later" selected: `<input type="datetime-local">` picker (defaults to +15 min)
+- Send button label switches to "Schedule for N numbers" with calendar icon
+- Scheduled batches appear in the Recent Send Batches panel with:
+  - Blue "Scheduled" pill + `Fires <date/time>` label + `N queued` count
+  - **Cancel** button (replaces Export CSV for scheduled state)
+  - Delete icon (permanently removes)
+- Timers registered via `setTimeout` on mount + when a schedule is created
+- Long delays capped at 2h chunks (browser throttle-safe), timer re-arms itself
+- Missed schedules (page closed past due time) auto-execute on next load; marked as "Missed" if template no longer available
+- Cancelled state shown with grey badge; missed shown with red badge
 
-## Quick Send capabilities
-### Recipients
-- Paste (newline / comma), 10+ digit validation, auto-dedup
-- CSV upload with auto-detection of phone / mobile / whatsapp / number column
+### Rate limiting + Pause/Resume/Stop
+- Automatic 250ms throttle between sends when batch > 50 recipients
+- Help text appears when batch crosses threshold: "Batches over 50 recipients auto-throttle to 250ms between sends to respect Meta's messaging tier limits."
+- **Send controller bar** (coral accent, visible only during send):
+  - Live "Sending / Paused — N of M" status
+  - Throttle info line
+  - **Pause** button (turns into Resume when paused)
+  - **Stop** button (danger style; cancels remaining recipients, saves batch as `cancelled`)
+  - Full-width progress bar
+- Pause check runs between each recipient via `gate()` awaiter
+- On Stop: remaining recipients marked `failed` with error `"Cancelled"`, batch saved with `status: 'cancelled'`
 
-### Variable personalization
-- Per-slot Fixed | From CSV toggle
-- **Auto-mapping heuristic** on CSV upload: `first_name`/`name` → `{{1}}`, `last_name`/`surname`/`company`/`brand` → `{{2}}`; falls back to template's own example values
-- Per-recipient live preview (renders row-specific values)
+## Full architecture (all features shipped in this session)
 
-### Send + audit
-- Sequential send with live status per row (queued → sending → sent / failed)
-- Per-recipient error surfaced
-- Successful sends land in unified Inbox via `logWhatsAppSends`
+### 4-item nav model
+Campaigns · Quick Send · Inbox · Messages · Results + Settings drawer + Onboarding sheet
 
-### Send batch history (`rx-quicksend-batches-v1`, max 20)
-- Every completed batch saved to localStorage with full recipient snapshot (phone, name, row, status, wamid, error, rendered body, timestamp)
-- **Recent send batches** panel with:
-  - Template name + `N sent` pill + `N failed` red pill / `All delivered` green pill
-  - Relative timestamp, source phone, total count
-  - Expand/collapse table (Phone / Name / Status / Message ID / Error)
-  - **Export CSV** per batch (columns: phone, name, status, wamid, error, body, sent_at, + any original CSV row columns)
-  - Delete single batch / Clear all history
+### Quick Send pipeline
+- Recipient input: paste (validation + dedup) or CSV upload (auto-detects phone column)
+- Variable auto-mapping: `first_name`/`name` → `{{1}}`, `last_name`/`brand` → `{{2}}`; per-slot `Fixed | From CSV` toggle
+- Per-recipient live preview using the actual first CSV row
+- Timing: Send now or Schedule for later (datetime picker)
+- Sending: pause/resume/stop, auto rate-limit for large batches
+- Real Meta WhatsApp Cloud API (`api.dev.getreelax.com`)
+- Successful sends flow into unified Inbox via `logWhatsAppSends`
+- Every batch saved to localStorage; Export CSV per batch
 
 ### Persistence
-- Template selection, variable bindings, CSV headers, phone column, recipients — all restored on reload
-- Store state (channels, campaigns, messages, analytics, etc.) restored under `reelax-outreach-v2`
+- `reelax-outreach-v2` — full store state
+- `rx-quicksend-v2` — Quick Send draft (template, bindings, CSV state, recipients)
+- `rx-quicksend-batches-v1` — up to 20 completed / scheduled / cancelled batches with full recipient snapshots
 
 ## Testing verified
-- testing_agent iteration 1: 100% pass on base app
-- testing_agent iteration 2: 100% functional on new batch/export flows; found + fixed one medium bug (sent-count pill was showing totalCount)
-
-## Files
-### New
-- `pages/QuickSendPage.tsx` — 1100 LOC, full Quick Send experience
-- `pages/CampaignsHub.tsx`, `CampaignDetail.tsx`, `InboxV2.tsx`, `TemplatesLib.tsx`, `ResultsV2.tsx`
-- `components/Drawer.tsx`, `PageHeader.tsx`, `EmptyState.tsx`
-- `components/SendDrawer.tsx`, `SettingsDrawer.tsx`, `OnboardingSheet.tsx`
-- `/app/sample-creators.csv` — sample CSV for testing
-
-### Rewritten (behavior preserved)
-- `App.tsx`, `App.css`, `index.css`, `index.html`
-- `components/Layout.tsx`, `Toast.tsx`, `CreateTemplateModal.tsx`
-- `store/WhatsAppStore.tsx` — additive persistence
-
-### Additive only
-- `types.ts` — `'quicksend'` in `TabId` union
-
-### Untouched
-- `src/lib/**`, `src/data/**`, all store business logic
+- testing_agent iteration 1: base app 100% pass
+- testing_agent iteration 2: batch history + export 100% functional (medium pill bug found + fixed + re-verified)
+- Manual verification: Timing card, scheduled batch appearance, Cancel button, Pause controller UI, throttle help text
 
 ## Nothing pushed to git
-As always requested. Use **Save to GitHub** in the chat input when ready.
+As always requested. Use **Save to GitHub** when ready.
 
-## Backlog / next
-- Extract `RecentBatches` + `BatchRow` + csv helpers into `pages/quicksend/` submodules (code hygiene — file is 1100 LOC)
-- Wire real WhatsApp Cloud API messages into `InboxV2` (currently in-memory demo)
+## Backlog
+- Wire real WhatsApp Cloud API into Inbox thread (currently in-memory demo)
 - Command palette (⌘K)
-- Dark mode (tokens are CSS-var driven — trivial to add)
-- Rate-limiting on batch send loop for very large batches to avoid Meta throttling
+- Dark mode
+- Extract `RecentBatches` + `BatchRow` into submodules (QuickSendPage.tsx is ~1500 LOC)
+- Batch retry: "Resend failed only" button per completed batch
