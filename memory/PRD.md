@@ -1,93 +1,63 @@
-# Reelax Outreach — Product & Design Redesign (v2)
+# Reelax Outreach — Product & Design Redesign (v2 + Quick Send)
 
-## Problem statement
-Redesign the entire product UX for Reelax Outreach — a creator outreach SaaS for brands.
-Rethink information architecture, navigation, page structure, and user flows, without breaking
-any underlying capability (WhatsApp + Email send, templates, campaigns, unified inbox, cascade
-sending, analytics, Meta template approval via `api.dev.getreelax.com`).
+## Problem
+Redesign the Reelax Outreach product UX end-to-end. Preserve every backend/API capability
+while inventing a clearer product experience with better IA, one canonical send flow,
+and a sandbox for ad-hoc sends to arbitrary phone numbers.
 
-## Constraints delivered
-- ✅ **Zero backend/API/store changes** — `WhatsAppStore`, `lib/api.ts`, `types.ts`, `data/seed.ts`
-  fully untouched. All capabilities preserved.
-- ✅ **GitHub Pages deploy** unchanged (`.github/workflows/deploy.yml` untouched).
-- ✅ Meta WhatsApp Cloud API integration still active (create template, send, inbox).
+## New IA (5 primary nav + Settings drawer)
+- **Campaigns** — landing; hub + detail
+- **Quick Send** *(NEW)* — sandbox to send any approved WA template to any phone or CSV
+- **Inbox** — unified conversations
+- **Messages** — templates (WA Meta + email scripts)
+- **Results** — analytics
+- **Settings** (drawer, not top nav) — channels / brands / team
+- **Onboarding sheet** — first-run channel connect
 
-## New information architecture
-- **Campaigns** (default landing) — hub + detail. Absorbs the old "Home / Floor".
-- **Inbox** — unified conversations (single/dual-channel), per-creator threads.
-- **Messages** — merged template library (WhatsApp Meta + email scripts).
-- **Results** — analytics (per-channel + per-campaign).
-- **Settings** (drawer, not top nav) — Channels, Brands, Team.
-- **Onboarding sheet** — first-run channel connect (auto-shown until 1 channel is live).
+## Canonical Send flows
+1. **SendDrawer wizard** (from Campaigns / campaign detail): 4-step Audience → Message → Strategy → Review
+2. **Quick Send page** (from nav): pick approved Meta template, paste phones or upload CSV, live variable preview, per-recipient send status; successful sends land in Inbox via `logWhatsAppSends`
 
-Old tabs removed / merged:
-- `floor` (Home) → merged into Campaigns
-- `connect` (Channels page) → moved to Settings drawer + first-run onboarding
+## Production polish
+- **localStorage persistence** — full store persisted under `reelax-outreach-v2`, volatile UI flags stripped; loads on boot via `loadPersisted`
+- **Onest + JetBrains Mono** typography (distinctive, non-cliché)
+- Cool neutrals + near-black CTA + restrained coral accent `#ff5c39`
+- Channel colors = badges/dots only, never themes
+- Motion: drawer slide, message enter, spinner, hover transitions
+- Mobile-responsive shell
+- Every interactive element has `data-testid`
 
-## Canonical "first outreach" flow (one path)
-Campaigns → "New outreach" → **SendDrawer** wizard (4 steps):
-1. **Audience** — name + collections / creators / existing campaign
-2. **Message** — channel(s) + template picker + live preview
-3. **Strategy** — Send now OR Smart sequence (cascade, smart defaults, advanced hidden by default)
-4. **Review** — recipient count + what happens + previews → Send
-
-SendDrawer is the single send UI, reused from: Campaigns hub, Campaign detail "Send again".
-
-## Visual language (v2)
-- Typography: **Onest** (variable) + **JetBrains Mono** for numerals — distinctive, not Inter/Roboto/Geist
-- Palette: cool near-neutrals, near-black `#111` as primary CTA, restrained **coral `#ff5c39`** accent
-- Channel colors are **dots and badges only** — never full themes
-- Motion: subtle drawer slide, message enter animation, hover transitions
-- No gradients, no glow, no glass, no serif editorial
-
-## Files
+## Files (net)
 ### New
+- `src/pages/QuickSendPage.tsx` — sandbox using real Meta API
+- `src/pages/CampaignsHub.tsx`, `CampaignDetail.tsx`, `InboxV2.tsx`, `TemplatesLib.tsx`, `ResultsV2.tsx`
 - `src/components/Drawer.tsx`, `PageHeader.tsx`, `EmptyState.tsx`
-- `src/components/SendDrawer.tsx` (canonical wizard)
-- `src/components/SettingsDrawer.tsx`
-- `src/components/OnboardingSheet.tsx`
-- `src/pages/CampaignsHub.tsx`, `CampaignDetail.tsx`
-- `src/pages/InboxV2.tsx`, `TemplatesLib.tsx`, `ResultsV2.tsx`
+- `src/components/SendDrawer.tsx`, `SettingsDrawer.tsx`, `OnboardingSheet.tsx`
 
 ### Rewritten (behavior preserved)
-- `src/components/Layout.tsx` — new 4-item nav
-- `src/components/Toast.tsx` — new visual style
-- `src/components/CreateTemplateModal.tsx` — new visual style, same submit logic
-- `src/App.tsx` — new router mapping
-- `src/index.css` — full new design system (single source of truth)
-- `index.html` — Onest + JetBrains Mono
-- `src/App.css` — cleared
+- `src/App.tsx`, `App.css`, `index.css`, `index.html`
+- `src/components/Layout.tsx`, `Toast.tsx`, `CreateTemplateModal.tsx`
+- `src/store/WhatsAppStore.tsx` — only add-only: `loadPersisted` + `persistState` + persistence `useEffect`
+- `src/types.ts` — additive: `'quicksend'` added to `TabId`
 
-### Preserved as-is (functional)
-- `src/store/WhatsAppStore.tsx`
-- `src/lib/**`
-- `src/data/seed.ts`
-- `src/types.ts`
-- `src/components/CascadeControls.tsx`, `SendWizard.tsx` (legacy, unused now)
-- `src/components/StatusBadge.tsx`, `VariableMapper.tsx`
+### Untouched
+- `src/lib/**`, `src/data/**`, remaining store logic, deploy workflow
 
-## What's implemented (Jul 2025 → complete)
-- Onboarding sheet with WA + Email connect drawers
-- Campaigns Hub with live counters, filter, per-campaign metrics + engagement bars
-- Campaign Detail with 5 metrics, split channel breakdown, live activity feed
-- SendDrawer 4-step wizard (audience / message / strategy / review) w/ progressive disclosure
-- InboxV2 two-panel layout, unified WA + Email, 24h window notice, reply composer, simulate inbound
-- TemplatesLib table view with search + tabs + New template modal
-- ResultsV2 top-line + per-channel + per-campaign performance table
-- SettingsDrawer for Channels / Brands / Team
-- Mobile-responsive layout collapse
+## Verified end-to-end (testing_agent iteration 1)
+- Onboarding sheet renders on fresh localStorage
+- 'Explore with demo data' skips to Campaigns
+- 5-item nav order + all testids present
+- Settings drawer opens / ESC closes
+- Quick Send: paste parsing, dedup, error toast, disabled state, real Meta API dropdown populated (10 approved templates observed)
+- localStorage survives reload — no re-onboarding
+- Campaigns hub / campaign detail / inbox / messages / results all render + interact correctly
+- SendDrawer wizard steps work
+- 0 JS console errors
+- **Frontend success rate: 100%**
 
-## What functional flows still work (verified)
-- Connect WA / Email → store actions unchanged
-- Prepare & send (single + cascade) → uses `actions.prepareAndSend`
-- Send reply within 24h window → uses `actions.sendReply` + `canFreeformReply`
-- Simulate inbound → cancels scheduled cascade follow-ups (existing store behavior)
-- Create template (WA via Meta API + local email) → `createWhatsAppTemplate` + `submitTemplate`
-- Analytics roll-up per campaign per channel
-
-## Next / backlog
-- Persist store to localStorage so demo state survives reload
-- Wire real WhatsApp Cloud API inbox in `InboxV2` (currently only in-memory demo threads)
-- Command palette (`⌘K`) for quick actions
-- CSV import path inside SendDrawer (currently only collections / creators / existing campaign)
-- Dark mode variant of the design system (tokens already CSS-var based)
+## Next / backlog (all non-blocking)
+- Persist QuickSend recipient list across page nav
+- Per-CSV-row variable mapping (currently uniform samples)
+- Command palette (⌘K) for quick actions
+- Dark mode variant (design tokens already CSS-var driven)
+- Wire real WhatsApp Cloud API inbox into `InboxV2`

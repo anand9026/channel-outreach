@@ -71,6 +71,7 @@ export function OnboardingSheet() {
                   businessId: 'demo_biz_1',
                 })
               }}
+              data-testid="onboarding-skip"
             >
               Explore with demo data
             </button>
