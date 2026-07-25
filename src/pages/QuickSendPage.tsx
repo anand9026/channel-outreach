@@ -802,18 +802,6 @@ export function QuickSendPage() {
   )
 }
 
-/** (deprecated helper — kept for future use) */
-function _unused_maybePreserveLiterals(
-  prev: Record<string, VarBinding>,
-  _headers: string[],
-): Record<string, VarBinding> {
-  const out: Record<string, VarBinding> = {}
-  for (const [k, v] of Object.entries(prev)) {
-    if (v.source === 'literal') out[k] = v
-  }
-  return out
-}
-
 function VariableEditor({
   slot,
   binding,
@@ -1028,7 +1016,7 @@ function BatchRow({
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="rx-row" style={{ gap: 8 }}>
               <strong style={{ fontSize: 14 }}>{batch.templateName}</strong>
-              <span className="rx-badge">{batch.totalCount} sent</span>
+              <span className="rx-badge">{batch.sentCount} sent</span>
               {batch.failedCount > 0 && (
                 <span className="rx-badge danger">{batch.failedCount} failed</span>
               )}
@@ -1038,6 +1026,8 @@ function BatchRow({
             </div>
             <div className="rx-text-xs rx-muted" style={{ marginTop: 3 }}>
               {timeAgo} · from <span className="mono">{batch.phoneDisplay}</span>
+              {' · '}
+              {batch.totalCount} total
             </div>
           </div>
         </div>
