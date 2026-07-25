@@ -114,6 +114,15 @@ export interface AppState {
     notifyEnabled: boolean
   }
   cannedReplies: Array<{ id: string; title: string; body: string }>
+  autoLabelRules: Array<{
+    id: string
+    name: string
+    /** case-insensitive substrings; message matches if ANY keyword is found */
+    keywords: string[]
+    /** labels to apply when the rule matches */
+    labels: string[]
+    enabled: boolean
+  }>
 }
 
 type Action =
@@ -250,6 +259,18 @@ type Action =
       payload: { id?: string; title: string; body: string }
     }
   | { type: 'DELETE_CANNED'; id: string }
+  | {
+      type: 'UPSERT_RULE'
+      payload: {
+        id?: string
+        name: string
+        keywords: string[]
+        labels: string[]
+        enabled: boolean
+      }
+    }
+  | { type: 'DELETE_RULE'; id: string }
+  | { type: 'TOGGLE_RULE'; id: string; enabled: boolean }
 
 const initialState: AppState = {
   organization: seedOrganization,
@@ -302,6 +323,29 @@ const initialState: AppState = {
       id: 'cn_confirm_slot',
       title: 'Confirm slot',
       body: 'Perfect \u2014 we\u2019re confirming your slot. You\u2019ll receive contract + payment terms within 24 hours.',
+    },
+  ],
+  autoLabelRules: [
+    {
+      id: 'rule_hot',
+      name: 'Hot lead signals',
+      keywords: ['rates', 'pricing', 'brief', 'interested', 'send more', 'let\u2019s do'],
+      labels: ['hot lead'],
+      enabled: true,
+    },
+    {
+      id: 'rule_paid',
+      name: 'Payment received',
+      keywords: ['invoice', 'paid', 'payment', 'received the amount'],
+      labels: ['paid'],
+      enabled: true,
+    },
+    {
+      id: 'rule_pass',
+      name: 'Soft pass',
+      keywords: ['not now', 'busy', 'maybe later', 'not a fit', 'pass'],
+      labels: ['not interested'],
+      enabled: false,
     },
   ],
 }
@@ -1636,6 +1680,47 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         cannedReplies: state.cannedReplies.filter((c) => c.id !== action.id),
       }
+    case 'UPSERT_RULE': {
+      const p = action.payload
+      if (p.id) {
+        const exists = state.autoLabelRules.some((r) => r.id === p.id)
+        if (exists) {
+          return {
+            ...state,
+            autoLabelRules: state.autoLabelRules.map((r) =>
+              r.id === p.id
+                ? { ...r, name: p.name, keywords: p.keywords, labels: p.labels, enabled: p.enabled }
+                : r,
+            ),
+          }
+        }
+      }
+      return {
+        ...state,
+        autoLabelRules: [
+          ...state.autoLabelRules,
+          {
+            id: p.id || uid('rule'),
+            name: p.name,
+            keywords: p.keywords,
+            labels: p.labels,
+            enabled: p.enabled,
+          },
+        ],
+      }
+    }
+    case 'DELETE_RULE':
+      return {
+        ...state,
+        autoLabelRules: state.autoLabelRules.filter((r) => r.id !== action.id),
+      }
+    case 'TOGGLE_RULE':
+      return {
+        ...state,
+        autoLabelRules: state.autoLabelRules.map((r) =>
+          r.id === action.id ? { ...r, enabled: action.enabled } : r,
+        ),
+      }
     default:
       return state
   }
@@ -1756,6 +1841,15 @@ interface StoreContextValue {
     bulkAssign: (conversationIds: string[], memberId: string | undefined) => void
     upsertCanned: (data: { id?: string; title: string; body: string }) => void
     deleteCanned: (id: string) => void
+    upsertRule: (data: {
+      id?: string
+      name: string
+      keywords: string[]
+      labels: string[]
+      enabled: boolean
+    }) => void
+    deleteRule: (id: string) => void
+    toggleRule: (id: string, enabled: boolean) => void
   }
 }
 
@@ -2139,6 +2233,59 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Auto-label rules: watch new inbound messages and apply matching labels
+  // to their conversation. Only new inbounds trigger — no back-fill on load.
+  const autoLabeledInboundRef = useRef<Set<string>>(new Set())
+  const autoLabelBootstrapRef = useRef(false)
+  useEffect(() => {
+    if (!autoLabelBootstrapRef.current) {
+      autoLabelBootstrapRef.current = true
+      for (const m of state.messages) {
+        if (m.direction === 'inbound') autoLabeledInboundRef.current.add(m.id)
+      }
+      return
+    }
+    const enabledRules = state.autoLabelRules.filter((r) => r.enabled)
+    if (enabledRules.length === 0) return
+
+    for (const m of state.messages) {
+      if (m.direction !== 'inbound') continue
+      if (autoLabeledInboundRef.current.has(m.id)) continue
+      autoLabeledInboundRef.current.add(m.id)
+
+      const body = (m.body || '').toLowerCase()
+      if (!body) continue
+
+      const toApply = new Set<string>()
+      for (const rule of enabledRules) {
+        const hit = rule.keywords.some(
+          (kw) => kw && body.includes(kw.toLowerCase()),
+        )
+        if (hit) for (const l of rule.labels) toApply.add(l.toLowerCase())
+      }
+      if (toApply.size === 0) continue
+
+      const conv = state.conversations.find((c) => c.id === m.conversationId)
+      if (!conv) continue
+      const existing = new Set((conv.labels || []).map((l) => l.toLowerCase()))
+      const added = [...toApply].filter((l) => !existing.has(l))
+      if (added.length === 0) continue
+
+      dispatch({
+        type: 'SET_CONV_LABELS',
+        conversationId: conv.id,
+        labels: [...(conv.labels || []), ...added],
+      })
+      dispatch({
+        type: 'ADD_TOAST',
+        toast: {
+          message: `Auto-labeled \u201c${added.join(', ')}\u201d from keyword match`,
+          variant: 'info',
+        },
+      })
+    }
+  }, [state.messages, state.autoLabelRules, state.conversations])
+
   const actions = useMemo(
     (): StoreContextValue['actions'] => ({
       setTab: (tab) => dispatch({ type: 'SET_TAB', tab }),
@@ -2275,6 +2422,9 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'BULK_ASSIGN', conversationIds, memberId }),
       upsertCanned: (data) => dispatch({ type: 'UPSERT_CANNED', payload: data }),
       deleteCanned: (id) => dispatch({ type: 'DELETE_CANNED', id }),
+      upsertRule: (data) => dispatch({ type: 'UPSERT_RULE', payload: data }),
+      deleteRule: (id) => dispatch({ type: 'DELETE_RULE', id }),
+      toggleRule: (id, enabled) => dispatch({ type: 'TOGGLE_RULE', id, enabled }),
     }),
     [
       toast,

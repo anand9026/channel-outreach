@@ -1,4 +1,4 @@
-import { CheckCircle2, Mail, MessageCircle, Moon, Plus, Sun, Trash2, Zap } from 'lucide-react'
+import { CheckCircle2, Mail, MessageCircle, Moon, Plus, Sparkles, Sun, Trash2, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { IgIcon } from './BrandIcons'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
@@ -16,6 +16,9 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
   const [igDrawer, setIgDrawer] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newBody, setNewBody] = useState('')
+  const [ruleName, setRuleName] = useState('')
+  const [ruleKeywords, setRuleKeywords] = useState('')
+  const [ruleLabels, setRuleLabels] = useState('')
 
   return (
     <>
@@ -271,6 +274,108 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
                   data-testid="add-canned"
                 >
                   <Plus size={12} /> Add canned reply
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div className="rx-section-title">
+            <Sparkles size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+            Auto-label rules
+          </div>
+          <div className="rx-card compact rx-mb-4">
+            <div className="rx-text-xs rx-muted rx-mb-2">
+              When a creator&rsquo;s inbound message contains any keyword, we auto-add labels to
+              the thread {'\u2014'} turning your inbox into a semi-automated triage system.
+            </div>
+            <div className="rx-col rx-gap">
+              {state.autoLabelRules.map((r) => (
+                <div key={r.id} className="rx-rule-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="rx-rule-title">
+                      <span className="rx-rule-name">{r.name}</span>
+                      <label className="rx-switch" aria-label="Enable rule">
+                        <input
+                          type="checkbox"
+                          checked={r.enabled}
+                          onChange={(e) => actions.toggleRule(r.id, e.target.checked)}
+                          data-testid={`rule-toggle-${r.id}`}
+                        />
+                        <span />
+                      </label>
+                    </div>
+                    <div className="rx-rule-meta">
+                      <div>
+                        <span className="rx-text-xs rx-muted">Keywords:</span>{' '}
+                        {r.keywords.map((k) => (
+                          <span key={k} className="rx-chip xs mono">{k}</span>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <span className="rx-text-xs rx-muted">Adds:</span>{' '}
+                        {r.labels.map((l) => (
+                          <span key={l} className="rx-chip xs">{l}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rx-icon-btn"
+                    aria-label="Delete rule"
+                    onClick={() => actions.deleteRule(r.id)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              <div className="rx-canned-add">
+                <input
+                  className="rx-input"
+                  placeholder="Rule name (e.g. Contract sent)"
+                  value={ruleName}
+                  onChange={(e) => setRuleName(e.target.value)}
+                />
+                <input
+                  className="rx-input"
+                  placeholder="Keywords, comma-separated (e.g. contract, signed)"
+                  value={ruleKeywords}
+                  onChange={(e) => setRuleKeywords(e.target.value)}
+                />
+                <input
+                  className="rx-input"
+                  placeholder="Labels to add, comma-separated (e.g. contract sent)"
+                  value={ruleLabels}
+                  onChange={(e) => setRuleLabels(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="rx-btn secondary sm"
+                  onClick={() => {
+                    const keywords = ruleKeywords
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                    const labels = ruleLabels
+                      .split(',')
+                      .map((s) => s.trim().toLowerCase())
+                      .filter(Boolean)
+                    if (!ruleName.trim() || keywords.length === 0 || labels.length === 0) return
+                    actions.upsertRule({
+                      name: ruleName.trim(),
+                      keywords,
+                      labels,
+                      enabled: true,
+                    })
+                    setRuleName('')
+                    setRuleKeywords('')
+                    setRuleLabels('')
+                  }}
+                  data-testid="add-rule"
+                >
+                  <Plus size={12} /> Add rule
                 </button>
               </div>
             </div>

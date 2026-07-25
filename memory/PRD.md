@@ -58,6 +58,10 @@ Command palette (⌘K) provides fast navigation & primary actions from anywhere.
 - **Dark mode** — Light / Dark / System toggle in Settings; CSS variables override cleanly across all components
 - **Desktop notifications toggle** in Inbox header
 
+### Automation
+- **Auto-label rules** — inbound message keyword matcher runs on every new inbound (skips back-fill on load). Rules are user-managed from Settings with name / comma-separated keywords / comma-separated labels / on-off toggle. Shows a toast when a rule fires. 3 rules seeded (Hot lead signals, Payment received, Soft pass).
+- **Simulate presets** — Inbox exposes Sim hot lead / Sim paid / Sim neutral buttons on non-live threads so you can demo the rule engine without waiting on real inbound.
+
 ### Discoverability & polish
 - **Command palette (⌘K / Ctrl+K)** — navigate to any page, run "New outreach", jump to any campaign or conversation via search
 - **Sparklines on Results page** — 30-day per-metric trend for Sent / Delivered / Read / Replies; coral accent on the Replies card
@@ -118,4 +122,11 @@ Use **Save to GitHub** in the chat input when ready.
   - Saved views strip (All / Unread / Hot leads / Unanswered 24h / Replied / Live only).
   - Emoji reactions on individual messages (hover heart → quick-pick), rendered as chips under bubbles.
   - Fixed lucide-react's removed brand icons by shipping tiny inline SVG `IgIcon` / `WaIcon` in `BrandIcons.tsx`.
-  - Updated files: `src/types.ts`, `src/data/seed.ts`, `src/store/WhatsAppStore.tsx`, `src/pages/InboxV2.tsx`, `src/components/OnboardingSheet.tsx`, `src/components/SettingsDrawer.tsx`, `src/components/Layout.tsx`, `src/components/BrandIcons.tsx` (new), `src/index.css`.
+- **2026-07-25 (auto-triage)** — Auto-label rules:
+  - `state.autoLabelRules` slice with 3 seeded rules (Hot lead signals / Payment received / Soft pass).
+  - Reducer actions `UPSERT_RULE` / `DELETE_RULE` / `TOGGLE_RULE`.
+  - Provider effect watches new inbound messages and applies matching labels + fires an info toast on match.
+  - Settings drawer UI to add / edit / delete / toggle rules with pill switch.
+  - Inbox composer exposes Sim hot lead / Sim paid / Sim neutral demo buttons to easily verify the rules from the UI.
+  - Verified end-to-end: a simulated inbound "Sure! Could you share your rates and the brief?" auto-labels the thread as `hot lead` with a toast.
+  - Updated files: `src/store/WhatsAppStore.tsx`, `src/components/SettingsDrawer.tsx`, `src/pages/InboxV2.tsx`, `src/index.css`.

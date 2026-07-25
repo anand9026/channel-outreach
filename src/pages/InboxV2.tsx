@@ -941,7 +941,34 @@ function Thread() {
           </button>
         </div>
         {!conv.isLive ? (
-          <div className="rx-row" style={{ gap: 6, marginTop: 4 }}>
+          <div className="rx-row" style={{ gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+            <span className="rx-text-xs rx-muted">Demo:</span>
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={() =>
+                actions.simulateInbound(
+                  conv.id,
+                  'Sure! Could you share your rates and the brief?',
+                )
+              }
+              data-testid="sim-hot"
+            >
+              Sim hot lead
+            </button>
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={() =>
+                actions.simulateInbound(
+                  conv.id,
+                  'Just processed the invoice \u2014 payment received!',
+                )
+              }
+              data-testid="sim-paid"
+            >
+              Sim paid
+            </button>
             <button
               type="button"
               className="rx-btn ghost sm"
@@ -951,8 +978,9 @@ function Thread() {
                   'Yes, sounds great! Would love to know more.',
                 )
               }
+              data-testid="sim-neutral"
             >
-              Simulate creator reply
+              Sim neutral
             </button>
           </div>
         ) : null}
