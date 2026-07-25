@@ -1297,8 +1297,60 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null)
 
+const STORAGE_KEY = 'reelax-outreach-v2'
+
+/**
+ * Persist a subset of state to localStorage so the demo survives reloads.
+ * Volatile UI-only fields (toasts, modal open flags) are stripped.
+ */
+function loadPersisted(): AppState {
+  if (typeof window === 'undefined') return initialState
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return initialState
+    const parsed = JSON.parse(raw) as Partial<AppState>
+    return {
+      ...initialState,
+      ...parsed,
+      // Never persist these
+      toasts: [],
+      connectModalOpen: false,
+      connectStep: 0,
+      emailModalOpen: false,
+    }
+  } catch {
+    return initialState
+  }
+}
+
+function persistState(state: AppState) {
+  if (typeof window === 'undefined') return
+  try {
+    const { toasts: _t, connectModalOpen: _cm, emailModalOpen: _em, connectStep: _cs, ...rest } = state
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rest))
+  } catch {
+    /* quota / private mode — ignore */
+  }
+}
+
 export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+  const [state, dispatch] = useReducer(reducer, undefined as unknown as AppState, loadPersisted)
+
+  // Persist on any change (debounced via requestIdleCallback if available)
+  useEffect(() => {
+    const idle =
+      (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback
+    if (idle) {
+      const id = idle(() => persistState(state))
+      return () => {
+        const cancel = (window as unknown as { cancelIdleCallback?: (id: number) => void })
+          .cancelIdleCallback
+        cancel?.(id)
+      }
+    }
+    const t = window.setTimeout(() => persistState(state), 100)
+    return () => window.clearTimeout(t)
+  }, [state])
 
   const toast = useCallback((message: string, variant: ToastItem['variant'] = 'info') => {
     dispatch({ type: 'ADD_TOAST', toast: { message, variant } })

@@ -1,4 +1,4 @@
-import { BarChart3, Inbox, LayoutTemplate, Send, Settings } from 'lucide-react'
+import { BarChart3, Inbox, LayoutTemplate, Send, Settings, Zap } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { TabId } from '../types'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
@@ -12,6 +12,7 @@ const primaryNav: {
   icon: typeof Send
 }[] = [
   { id: 'campaigns', label: 'Campaigns', icon: Send },
+  { id: 'quicksend', label: 'Quick Send', icon: Zap },
   { id: 'inbox', label: 'Inbox', icon: Inbox },
   { id: 'templates', label: 'Messages', icon: LayoutTemplate },
   { id: 'analytics', label: 'Results', icon: BarChart3 },

@@ -1943,6 +1943,14 @@ a {
 .rx-mt-6 { margin-top: 24px; }
 .rx-mt-4 { margin-top: 16px; }
 .rx-mt-2 { margin-top: 8px; }
+.rx-spin {
+  animation: rx-spin 900ms linear infinite;
+}
+
+@keyframes rx-spin {
+  to { transform: rotate(360deg); }
+}
+
 .rx-divider {
   height: 1px;
   background: var(--border);
