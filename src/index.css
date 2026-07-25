@@ -3026,3 +3026,77 @@ a {
 .rx-switch input:checked + span::before {
   transform: translateX(14px);
 }
+
+/* =========================================================================
+   Template creation modal — dedicated scroll structure
+   ========================================================================= */
+.rx-tpl-modal {
+  /* Prevent header/footer from being pushed off-screen when the body scrolls */
+  min-height: 0;
+}
+.rx-tpl-modal .rx-modal-head {
+  flex-shrink: 0;
+}
+.rx-tpl-modal .rx-modal-foot {
+  flex-shrink: 0;
+}
+.rx-tpl-body {
+  /* Firefox needs this too */
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+/* The sticky preview needs a positioning context — its grid cell.
+   Enforce the sticky top offset relative to the scrolling grid container. */
+.rx-tpl-preview-wrap {
+  align-self: start;
+  position: sticky;
+  top: 4px;
+  max-height: calc(92vh - 200px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* On narrow viewports collapse to a single column so nothing overflows */
+@media (max-width: 900px) {
+  .rx-tpl-body {
+    grid-template-columns: 1fr !important;
+  }
+  .rx-tpl-preview-wrap {
+    position: static !important;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* Narrower still: stack the fixed rows so they don't cause horizontal overflow */
+@media (max-width: 640px) {
+  /* The template CTA row (kind + label + url + delete) becomes a stack of full-width rows */
+  .rx-tpl-cta-row {
+    grid-template-columns: 1fr !important;
+  }
+  .rx-tpl-cta-row select,
+  .rx-tpl-cta-row input {
+    width: 100% !important;
+  }
+  /* The top Name / Category / Language row (rendered as inline flex with fixed widths) */
+  .rx-tpl-body .rx-col > .rx-row {
+    flex-wrap: wrap !important;
+  }
+  .rx-tpl-body .rx-col > .rx-row > .rx-field {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  /* Modal scrim padding halved on narrow screens so more content fits */
+  .rx-modal-scrim {
+    padding: 8px !important;
+  }
+  /* Sample values grid keeps a smaller column floor */
+  .rx-tpl-samples {
+    grid-template-columns: 1fr !important;
+  }
+  /* Modal head/body/foot padding tightened */
+  .rx-tpl-modal .rx-modal-head { padding: 14px 16px 8px !important; }
+  .rx-tpl-modal .rx-modal-foot { padding: 12px 16px !important; }
+  .rx-tpl-body { padding: 6px 16px 16px !important; }
+}

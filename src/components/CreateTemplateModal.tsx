@@ -305,9 +305,15 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   return (
     <div className="rx-modal-scrim" role="dialog" aria-modal="true" onClick={close}>
       <div
-        className="rx-modal"
+        className="rx-modal rx-tpl-modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 920, maxWidth: '96vw', maxHeight: '92vh' }}
+        style={{
+          width: 920,
+          maxWidth: '100%',
+          maxHeight: '92vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
       >
         <div className="rx-modal-head">
           <div className="rx-row" style={{ justifyContent: 'space-between' }}>
@@ -323,7 +329,18 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
           </div>
         </div>
 
-        <div className="rx-modal-body" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, overflow: 'auto' }}>
+        <div
+          className="rx-modal-body rx-tpl-body"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 340px',
+            gap: 24,
+            overflow: 'auto',
+            minHeight: 0,
+            flex: 1,
+            alignItems: 'start',
+          }}
+        >
           {/* -------- LEFT: builder -------- */}
           <div className="rx-col rx-gap">
             <div className="rx-seg">
