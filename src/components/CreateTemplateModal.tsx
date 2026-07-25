@@ -309,7 +309,7 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 920,
-          maxWidth: '96vw',
+          maxWidth: '100%',
           maxHeight: '92vh',
           display: 'flex',
           flexDirection: 'column',
