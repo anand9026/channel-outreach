@@ -28,3 +28,9 @@ dist-ssr
 # supervisor symlink (local dev only)
 frontend
 
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
