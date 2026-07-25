@@ -103,6 +103,13 @@ export interface AppState {
     /** Cached connection info from GET /whatsapp-outreach/connection */
     connection: ConnectionInfo | null
   }
+  prefs: {
+    /** Theme preference — 'system' uses prefers-color-scheme */
+    theme: 'light' | 'dark' | 'system'
+    /** Desktop notification opt-in state — mirrors Notification.permission */
+    notifyEnabled: boolean
+  }
+  cannedReplies: Array<{ id: string; title: string; body: string }>
 }
 
 type Action =
@@ -215,6 +222,16 @@ type Action =
       type: 'MERGE_INBOX_MESSAGES'
       payload: { phone: string; messages: ApiInboxMessage[]; phoneNumberId?: string }
     }
+  | { type: 'SET_THEME'; theme: 'light' | 'dark' | 'system' }
+  | { type: 'SET_NOTIFY_ENABLED'; enabled: boolean }
+  | { type: 'SET_CONV_LABELS'; conversationId: string; labels: string[] }
+  | { type: 'BULK_RESOLVE'; conversationIds: string[] }
+  | { type: 'BULK_ASSIGN'; conversationIds: string[]; memberId: string | undefined }
+  | {
+      type: 'UPSERT_CANNED'
+      payload: { id?: string; title: string; body: string }
+    }
+  | { type: 'DELETE_CANNED'; id: string }
 
 const initialState: AppState = {
   organization: seedOrganization,
@@ -246,6 +263,27 @@ const initialState: AppState = {
     lastError: null,
     connection: null,
   },
+  prefs: {
+    theme: 'system',
+    notifyEnabled: false,
+  },
+  cannedReplies: [
+    {
+      id: 'cn_thanks',
+      title: 'Thanks',
+      body: 'Thanks so much for the reply! I\u2019ll be back with details shortly.',
+    },
+    {
+      id: 'cn_share_brief',
+      title: 'Share brief',
+      body: 'Great, here\u2019s the campaign brief with deliverables + timeline. Let me know your thoughts.',
+    },
+    {
+      id: 'cn_confirm_slot',
+      title: 'Confirm slot',
+      body: 'Perfect \u2014 we\u2019re confirming your slot. You\u2019ll receive contract + payment terms within 24 hours.',
+    },
+  ],
 }
 
 function uid(prefix: string): string {
@@ -280,6 +318,19 @@ function mapLiveStatus(
   if (v === 'read') return 'read'
   if (v === 'failed' || v === 'undelivered') return 'failed'
   return direction === 'inbound' ? 'delivered' : 'sent'
+}
+
+function mapMediaKind(
+  messageType: string | undefined,
+  mime: string | null | undefined,
+): Message['mediaKind'] {
+  const t = (messageType || '').toLowerCase()
+  if (t === 'image' || (mime || '').startsWith('image/')) return 'image'
+  if (t === 'video' || (mime || '').startsWith('video/')) return 'video'
+  if (t === 'audio' || t === 'voice' || (mime || '').startsWith('audio/')) return 'audio'
+  if (t === 'document' || (mime || '').startsWith('application/')) return 'document'
+  if (t === 'sticker') return 'sticker'
+  return null
 }
 
 export function connectionMode(state: Pick<AppState, 'whatsAppNumbers' | 'emailAccounts'>): ConnectionMode {
@@ -1399,11 +1450,12 @@ function reducer(state: AppState, action: Action): AppState {
         const wamid = m.wamid || m.id
         if (wamid && existingIds.has(wamid)) continue
         if (m.id && existingLocalIds.has(m.id)) continue
+        const kind = mapMediaKind(m.message_type, m.mime_type)
         const body =
           m.body ||
           m.caption ||
           m.emoji ||
-          `[${m.message_type || 'message'}]`
+          (kind ? `[${kind}]` : `[${m.message_type || 'message'}]`)
         newMsgs.push({
           id: m.id || uid('msg'),
           conversationId: convId,
@@ -1415,6 +1467,10 @@ function reducer(state: AppState, action: Action): AppState {
           isTemplate: Boolean(m.is_template),
           createdAt: m.created_at,
           metaMessageId: wamid || m.id || uid('meta'),
+          mediaId: m.media_id ?? null,
+          mediaMime: m.mime_type ?? null,
+          mediaKind: kind,
+          caption: m.caption ?? null,
         })
       }
       if (newMsgs.length === 0) return state
@@ -1455,6 +1511,63 @@ function reducer(state: AppState, action: Action): AppState {
         ),
       }
     }
+    case 'SET_THEME':
+      return { ...state, prefs: { ...state.prefs, theme: action.theme } }
+    case 'SET_NOTIFY_ENABLED':
+      return { ...state, prefs: { ...state.prefs, notifyEnabled: action.enabled } }
+    case 'SET_CONV_LABELS':
+      return {
+        ...state,
+        conversations: state.conversations.map((c) =>
+          c.id === action.conversationId ? { ...c, labels: action.labels } : c,
+        ),
+      }
+    case 'BULK_RESOLVE': {
+      const ids = new Set(action.conversationIds)
+      return {
+        ...state,
+        conversations: state.conversations.map((c) =>
+          ids.has(c.id) ? { ...c, status: 'resolved' as const } : c,
+        ),
+      }
+    }
+    case 'BULK_ASSIGN': {
+      const ids = new Set(action.conversationIds)
+      return {
+        ...state,
+        conversations: state.conversations.map((c) =>
+          ids.has(c.id)
+            ? { ...c, assignedTo: action.memberId, status: 'pending' as const }
+            : c,
+        ),
+      }
+    }
+    case 'UPSERT_CANNED': {
+      const { id, title, body } = action.payload
+      if (id) {
+        const exists = state.cannedReplies.some((c) => c.id === id)
+        if (exists) {
+          return {
+            ...state,
+            cannedReplies: state.cannedReplies.map((c) =>
+              c.id === id ? { ...c, title, body } : c,
+            ),
+          }
+        }
+      }
+      return {
+        ...state,
+        cannedReplies: [
+          ...state.cannedReplies,
+          { id: id || uid('cn'), title, body },
+        ],
+      }
+    }
+    case 'DELETE_CANNED':
+      return {
+        ...state,
+        cannedReplies: state.cannedReplies.filter((c) => c.id !== action.id),
+      }
     default:
       return state
   }
@@ -1559,6 +1672,14 @@ interface StoreContextValue {
     setLivePolling: (polling: boolean) => void
     syncLiveInboxNow: () => Promise<void>
     sendWhatsAppReplyLive: (conversationId: string, body: string) => Promise<boolean>
+    setTheme: (theme: 'light' | 'dark' | 'system') => void
+    enableNotifications: () => Promise<boolean>
+    disableNotifications: () => void
+    setConversationLabels: (conversationId: string, labels: string[]) => void
+    bulkResolve: (conversationIds: string[]) => void
+    bulkAssign: (conversationIds: string[], memberId: string | undefined) => void
+    upsertCanned: (data: { id?: string; title: string; body: string }) => void
+    deleteCanned: (id: string) => void
   }
 }
 
@@ -1845,6 +1966,103 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(id)
   }, [state.liveInbox.polling, state.selectedConversationId, doLiveSync])
 
+  // Apply theme preference to the document root.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const html = document.documentElement
+    const pref = state.prefs.theme
+    let applied: 'light' | 'dark' = 'light'
+    if (pref === 'system') {
+      const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+      applied = mq?.matches ? 'dark' : 'light'
+      const onChange = () => {
+        html.setAttribute('data-theme', mq.matches ? 'dark' : 'light')
+      }
+      mq?.addEventListener?.('change', onChange)
+      html.setAttribute('data-theme', applied)
+      return () => mq?.removeEventListener?.('change', onChange)
+    }
+    applied = pref
+    html.setAttribute('data-theme', applied)
+  }, [state.prefs.theme])
+
+  // Desktop notifications: fire when a new inbound WhatsApp message lands
+  // in a conversation the user isn\u2019t currently looking at.
+  const seenInboundIdsRef = useRef<Set<string>>(new Set())
+  const inboundBootstrapDoneRef = useRef(false)
+  useEffect(() => {
+    // First pass: mark existing inbound as \u201cseen\u201d without notifying,
+    // so notifications only fire for genuinely new messages.
+    if (!inboundBootstrapDoneRef.current) {
+      inboundBootstrapDoneRef.current = true
+      for (const m of state.messages) {
+        if (m.direction === 'inbound') seenInboundIdsRef.current.add(m.id)
+      }
+      return
+    }
+
+    if (!state.prefs.notifyEnabled) return
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (Notification.permission !== 'granted') return
+
+    const focused =
+      typeof document !== 'undefined' ? document.hasFocus() : true
+
+    for (const m of state.messages) {
+      if (m.direction !== 'inbound') continue
+      if (seenInboundIdsRef.current.has(m.id)) continue
+      seenInboundIdsRef.current.add(m.id)
+
+      // Don\u2019t notify for the conversation the user is actively viewing.
+      if (
+        focused &&
+        state.selectedConversationId === m.conversationId
+      ) {
+        continue
+      }
+      const conv = state.conversations.find((c) => c.id === m.conversationId)
+      const inf = conv
+        ? state.influencers.find((i) => i.id === conv.influencerId)
+        : undefined
+      const title = `New reply \u2014 ${inf?.name || conv?.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}`
+      try {
+        const n = new Notification(title, {
+          body: (m.body || '').slice(0, 120),
+          tag: `reelax-${m.conversationId}`,
+          icon: '/favicon.ico',
+        })
+        n.onclick = () => {
+          window.focus()
+          dispatch({
+            type: 'SELECT_CONVERSATION',
+            conversationId: m.conversationId,
+          })
+          dispatch({ type: 'SET_TAB', tab: 'inbox' })
+          n.close()
+        }
+      } catch {
+        /* browser may throw for tab in background — ignore */
+      }
+    }
+  }, [
+    state.messages,
+    state.prefs.notifyEnabled,
+    state.selectedConversationId,
+    state.conversations,
+    state.influencers,
+  ])
+
+  // Reflect current OS permission back into prefs so the UI stays honest.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    const perm = Notification.permission
+    const shouldBe = perm === 'granted'
+    if (state.prefs.notifyEnabled !== shouldBe) {
+      dispatch({ type: 'SET_NOTIFY_ENABLED', enabled: shouldBe })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const actions = useMemo(
     (): StoreContextValue['actions'] => ({
       setTab: (tab) => dispatch({ type: 'SET_TAB', tab }),
@@ -1942,6 +2160,36 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       setLivePolling: (polling) => dispatch({ type: 'SET_LIVE_POLLING', polling }),
       syncLiveInboxNow: () => doLiveSync(),
       sendWhatsAppReplyLive,
+      setTheme: (theme) => dispatch({ type: 'SET_THEME', theme }),
+      enableNotifications: async () => {
+        if (typeof window === 'undefined' || !('Notification' in window)) {
+          toast('Desktop notifications are not supported in this browser', 'error')
+          return false
+        }
+        try {
+          const perm = await Notification.requestPermission()
+          const ok = perm === 'granted'
+          dispatch({ type: 'SET_NOTIFY_ENABLED', enabled: ok })
+          if (ok) {
+            toast('Desktop notifications on — you\u2019ll be pinged for new replies', 'success')
+          } else {
+            toast('Notifications blocked in the browser', 'error')
+          }
+          return ok
+        } catch {
+          return false
+        }
+      },
+      disableNotifications: () =>
+        dispatch({ type: 'SET_NOTIFY_ENABLED', enabled: false }),
+      setConversationLabels: (conversationId, labels) =>
+        dispatch({ type: 'SET_CONV_LABELS', conversationId, labels }),
+      bulkResolve: (conversationIds) =>
+        dispatch({ type: 'BULK_RESOLVE', conversationIds }),
+      bulkAssign: (conversationIds, memberId) =>
+        dispatch({ type: 'BULK_ASSIGN', conversationIds, memberId }),
+      upsertCanned: (data) => dispatch({ type: 'UPSERT_CANNED', payload: data }),
+      deleteCanned: (id) => dispatch({ type: 'DELETE_CANNED', id }),
     }),
     [
       toast,

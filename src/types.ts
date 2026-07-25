@@ -195,6 +195,11 @@ export interface Message {
   scheduledFor?: string
   /** Prototype timer: epoch ms when scheduled → queued */
   demoReleaseAt?: number
+  /** WhatsApp media rendering (only set for messages coming from the Cloud API) */
+  mediaId?: string | null
+  mediaMime?: string | null
+  mediaKind?: 'image' | 'video' | 'audio' | 'document' | 'sticker' | null
+  caption?: string | null
 }
 
 export interface Conversation {
@@ -218,6 +223,8 @@ export interface Conversation {
   lastPreview?: string
   /** True when this thread is sourced from the live WhatsApp Cloud API */
   isLive?: boolean
+  /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */
+  labels?: string[]
 }
 
 export interface TeamMember {

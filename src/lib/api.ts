@@ -159,7 +159,29 @@ export async function createWhatsAppTemplate(input: {
   category?: string
   body: string
   exampleValues?: string[]
+  /**
+   * Optional richer components. When supplied, `components` fully replaces
+   * the auto-generated BODY block. Use this to send HEADER / FOOTER / BUTTONS
+   * to Meta together with the body.
+   */
+  components?: Array<Record<string, unknown>>
 }) {
+  if (input.components && input.components.length > 0) {
+    const res = await request<ApiSuccess<Record<string, unknown>>>(
+      '/whatsapp-outreach/templates',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          language: input.language || 'en_US',
+          category: input.category || 'UTILITY',
+          components: input.components,
+        }),
+      },
+    )
+    return res.data
+  }
+
   const slots = [...input.body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])
   const uniqueSlots = [...new Set(slots)].sort(
     (a, b) => Number(a) - Number(b),
