@@ -1,29 +1,25 @@
+import './App.css'
 import { Layout } from './components/Layout'
-import { AnalyticsPage } from './pages/AnalyticsPage'
-import { CampaignsPage } from './pages/CampaignsPage'
-import { ConnectPage } from './pages/ConnectPage'
-import { FloorPage } from './pages/FloorPage'
-import { InboxPage } from './pages/InboxPage'
-import { TemplatesPage } from './pages/TemplatesPage'
+import { CampaignsHub } from './pages/CampaignsHub'
+import { InboxV2 } from './pages/InboxV2'
+import { ResultsV2 } from './pages/ResultsV2'
+import { TemplatesLib } from './pages/TemplatesLib'
 import { WhatsAppStoreProvider, useWhatsAppStore } from './store/WhatsAppStore'
 
 function Router() {
   const { state } = useWhatsAppStore()
   switch (state.activeTab) {
-    case 'floor':
-      return <FloorPage />
-    case 'connect':
-      return <ConnectPage />
-    case 'templates':
-      return <TemplatesPage />
-    case 'campaigns':
-      return <CampaignsPage />
     case 'inbox':
-      return <InboxPage />
+      return <InboxV2 />
+    case 'templates':
+      return <TemplatesLib />
     case 'analytics':
-      return <AnalyticsPage />
+      return <ResultsV2 />
+    case 'floor':
+    case 'campaigns':
+    case 'connect':
     default:
-      return <FloorPage />
+      return <CampaignsHub />
   }
 }
 

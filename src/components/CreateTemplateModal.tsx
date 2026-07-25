@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { ApiError, createWhatsAppTemplate } from '../lib/api'
 import { extractMetaSlots } from '../lib/templateSlots'
@@ -10,12 +11,12 @@ const categories: TemplateCategory[] = ['MARKETING', 'UTILITY', 'AUTHENTICATION'
 type Props = {
   open: boolean
   onClose: () => void
-  onCreated: () => void
+  onCreated?: () => void
 }
 
 /**
- * Template create = Meta script only (name, category, body, sample values).
- * No brand / influencer / audience mapping here — that belongs at send time.
+ * Create a template (Meta WhatsApp or local email script).
+ * Kept the underlying submit logic intact — just modernized the UI.
  */
 export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   const { actions } = useWhatsAppStore()
@@ -24,13 +25,14 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   const [category, setCategory] = useState<TemplateCategory>('UTILITY')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('Hello {{1}}, thanks for connecting with us.')
-  const [samples, setSamples] = useState<Record<string, string>>({ '1': 'Anand' })
+  const [samples, setSamples] = useState<Record<string, string>>({ '1': 'Priya' })
   const [submitting, setSubmitting] = useState(false)
 
   const slots = useMemo(() => extractMetaSlots(body), [body])
-  const previewBody = useMemo(() => {
-    return body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => samples[n] || `{{${n}}}`)
-  }, [body, samples])
+  const previewBody = useMemo(
+    () => body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => samples[n] || `{{${n}}}`),
+    [body, samples],
+  )
 
   if (!open) return null
 
@@ -38,17 +40,17 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     setName('')
     setBody('Hello {{1}}, thanks for connecting with us.')
     setSubject('')
-    setSamples({ '1': 'Anand' })
+    setSamples({ '1': 'Priya' })
     setChannel('whatsapp')
     setCategory('UTILITY')
   }
 
-  const handleClose = () => {
+  const close = () => {
     reset()
     onClose()
   }
 
-  const handleSubmit = async () => {
+  const submit = async () => {
     if (!name.trim() || !body.trim()) {
       actions.toast('Name and body are required', 'error')
       return
@@ -85,7 +87,7 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         })
         actions.toast(`Submitted ${metaName} to Meta`, 'success')
         reset()
-        onCreated()
+        onCreated?.()
         onClose()
       } catch (err) {
         actions.toast(
@@ -116,113 +118,130 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
       brandId: null,
     })
     reset()
-    onCreated()
+    onCreated?.()
     onClose()
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal modal-wide">
-        <h3>Create template</h3>
-        <p className="muted">
-          Script for Meta approval only — name, category, body, samples. Map CSV / phones /
-          influencers later when you send.
-        </p>
-
-        <div className="stack gap-3" style={{ marginTop: 12 }}>
-          <div className="segmented full">
-            <button
-              type="button"
-              className={channel === 'whatsapp' ? 'active wa' : ''}
-              onClick={() => setChannel('whatsapp')}
-            >
-              WhatsApp → Meta
-            </button>
-            <button
-              type="button"
-              className={channel === 'email' ? 'active email' : ''}
-              onClick={() => setChannel('email')}
-            >
-              Email (local)
-            </button>
-          </div>
-
-          <div className="form-grid-2">
-            <label className="field">
-              <span>Name</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="welcome_outreach_v1"
-              />
-            </label>
-            <label className="field">
-              <span>Category</span>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as TemplateCategory)}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {channel === 'email' ? (
-            <label className="field">
-              <span>Subject</span>
-              <input value={subject} onChange={(e) => setSubject(e.target.value)} />
-            </label>
-          ) : null}
-
-          <label className="field">
-            <span>
-              Body{channel === 'whatsapp' ? ' (use {{1}}, {{2}} …)' : ''}
-            </span>
-            <textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
-          </label>
-
-          {channel === 'whatsapp' && slots.length > 0 ? (
-            <div className="stack gap-2">
-              <p className="field-label">Sample values (required by Meta review)</p>
-              {slots.map((s) => (
-                <label key={s} className="field">
-                  <span>{`{{${s}}}`}</span>
-                  <input
-                    value={samples[s] ?? ''}
-                    onChange={(e) =>
-                      setSamples((prev) => ({ ...prev, [s]: e.target.value }))
-                    }
-                    placeholder={`Sample for {{${s}}}`}
-                  />
-                </label>
-              ))}
+    <div className="rx-modal-scrim" role="dialog" aria-modal="true" onClick={close}>
+      <div className="rx-modal" onClick={(e) => e.stopPropagation()} style={{ width: 560 }}>
+        <div className="rx-modal-head">
+          <div className="rx-row" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <div className="rx-modal-title">Create template</div>
+              <div className="rx-text-xs rx-muted" style={{ marginTop: 4 }}>
+                Script for Meta approval or local email use — map to creators at send time.
+              </div>
             </div>
-          ) : null}
-
-          <div className="preview-box">
-            <p className="muted-xs">Preview with samples</p>
-            {channel === 'email' && subject ? (
-              <p>
-                <strong>{subject}</strong>
-              </p>
-            ) : null}
-            <p>{previewBody}</p>
+            <button className="rx-icon-btn" onClick={close} aria-label="Close">
+              <X size={16} />
+            </button>
           </div>
         </div>
 
-        <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={handleClose}>
+        <div className="rx-modal-body">
+          <div className="rx-seg">
+            <button
+              className={`rx-seg-btn${channel === 'whatsapp' ? ' is-active' : ''}`}
+              onClick={() => setChannel('whatsapp')}
+            >
+              WhatsApp
+            </button>
+            <button
+              className={`rx-seg-btn${channel === 'email' ? ' is-active' : ''}`}
+              onClick={() => setChannel('email')}
+            >
+              Email
+            </button>
+          </div>
+
+          <div className="rx-field">
+            <label className="rx-label">Template name</label>
+            <input
+              className="rx-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="welcome_outreach_v1"
+              data-testid="tpl-name"
+            />
+          </div>
+
+          <div className="rx-field">
+            <label className="rx-label">Category</label>
+            <select
+              className="rx-select"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TemplateCategory)}
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {channel === 'email' && (
+            <div className="rx-field">
+              <label className="rx-label">Subject</label>
+              <input
+                className="rx-input"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Would love to collaborate"
+              />
+            </div>
+          )}
+
+          <div className="rx-field">
+            <label className="rx-label">
+              Body{channel === 'whatsapp' ? ' — use {{1}}, {{2}} … for variables' : ''}
+            </label>
+            <textarea
+              className="rx-textarea"
+              rows={4}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+            />
+          </div>
+
+          {channel === 'whatsapp' && slots.length > 0 && (
+            <div className="rx-col rx-gap">
+              <div className="rx-label">Sample values (required by Meta review)</div>
+              {slots.map((s) => (
+                <div key={s} className="rx-field">
+                  <label className="rx-label mono">{`{{${s}}}`}</label>
+                  <input
+                    className="rx-input"
+                    value={samples[s] ?? ''}
+                    onChange={(e) => setSamples((prev) => ({ ...prev, [s]: e.target.value }))}
+                    placeholder={`Sample for {{${s}}}`}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className={`rx-preview ${channel}`}>
+            {channel === 'email' && subject ? (
+              <div className="rx-subject">
+                <strong>{subject}</strong>
+              </div>
+            ) : null}
+            {previewBody}
+          </div>
+        </div>
+
+        <div className="rx-modal-foot">
+          <button type="button" className="rx-btn ghost" onClick={close}>
             Cancel
           </button>
           <button
             type="button"
-            className={`btn primary ${channel === 'email' ? 'email' : 'wa'}`}
+            className="rx-btn primary"
             disabled={submitting}
-            onClick={() => void handleSubmit()}
+            onClick={() => void submit()}
+            data-testid="tpl-submit"
           >
             {submitting
               ? 'Submitting…'
