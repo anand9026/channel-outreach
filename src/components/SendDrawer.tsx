@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { firstChannel } from '../lib/cascade'
 import { mergeBindings, renderWithBindings } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
-import type { CascadeOptions, OutreachChannel, Template } from '../types'
+import type { CascadeOptions, Template } from '../types'
 import { Drawer } from './Drawer'
 
 type SendState = {

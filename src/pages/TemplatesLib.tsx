@@ -10,7 +10,7 @@ type Row = {
   key: string
   source: 'local' | 'meta'
   name: string
-  channel: 'whatsapp' | 'email'
+  channel: 'whatsapp' | 'email' | 'instagram'
   category: string
   body: string
   variables: string[]

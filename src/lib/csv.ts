@@ -72,6 +72,14 @@ export function findPhoneColumn(headers: string[]): string | null {
   return headers[0] ?? null
 }
 
+export function csvEscape(value: string): string {
+  const s = value == null ? '' : String(value)
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  return s
+}
+
 export function parsePhoneList(text: string): string[] {
   const parts = text
     .split(/[\n,;]+/)

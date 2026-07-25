@@ -812,6 +812,7 @@ function reducer(state: AppState, action: Action): AppState {
               )!,
             }
           : undefined,
+        instagram: undefined,
       }
 
       const campaign = state.campaigns.find((c) => c.id === campaignId)
@@ -1302,6 +1303,7 @@ function reducer(state: AppState, action: Action): AppState {
             campaignId: id,
             whatsapp: emptyMetrics(),
             email: emptyMetrics(),
+            instagram: emptyMetrics(),
           },
           ...state.analytics,
         ],

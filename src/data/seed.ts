@@ -317,7 +317,7 @@ export const seedTeam: TeamMember[] = [
 
 export function conversationKey(
   organizationId: string,
-  channel: 'whatsapp' | 'email',
+  channel: 'whatsapp' | 'email' | 'instagram',
   accountId: string,
   influencerId: string,
 ): string {

@@ -145,7 +145,6 @@ export function CampaignsHub() {
           {campaigns.map((c) => {
             const analytics = state.analytics.find((a) => a.campaignId === c.id)
             const sent = (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
-            const delivered = (analytics?.whatsapp.delivered || 0) + (analytics?.email.delivered || 0)
             const replies = (analytics?.whatsapp.replied || 0) + (analytics?.email.replied || 0)
             const engagement = sent > 0 ? Math.round((replies / sent) * 100) : 0
             const channels = state.channels.filter((ch) => ch.campaignId === c.id)
