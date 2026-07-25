@@ -27,7 +27,13 @@ import {
   sendWhatsAppTemplate,
   type MetaTemplate,
 } from '../lib/api'
-import { findPhoneColumn, normalizePhone, parseCsv, parsePhoneList } from '../lib/csv'
+import {
+  csvEscape,
+  findPhoneColumn,
+  normalizePhone,
+  parseCsv,
+  parsePhoneList,
+} from '../lib/csv'
 import { extractMetaSlots } from '../lib/templateSlots'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 

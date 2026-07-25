@@ -4,7 +4,6 @@ import {
   LayoutTemplate,
   Search,
   Send,
-  Settings,
   Sparkles,
   Zap,
 } from 'lucide-react'
