@@ -2,11 +2,18 @@ import {
   AlertTriangle,
   Bell,
   BellOff,
+  Bookmark,
   Check,
   CheckCheck,
   CheckSquare,
   ExternalLink,
   FileText,
+  Filter,
+  Flame,
+  Heart,
+  Image as ImageIcon,
+  Inbox as InboxIcon,
+  Mail,
   MessageCircle,
   Paperclip,
   Play,
@@ -24,9 +31,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EmojiPicker } from '../components/EmojiPicker'
 import { EmptyState } from '../components/EmptyState'
+import { IgIcon } from '../components/BrandIcons'
 import { whatsappMediaUrl } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { Message } from '../types'
+import type { Conversation, Message, OutreachChannel } from '../types'
 
 function formatSince(ts: string | null): string {
   if (!ts) return 'never'
@@ -49,11 +57,68 @@ const SUGGESTED_LABELS = [
   'not interested',
 ]
 
+const REACTION_QUICKPICK = ['\u2764\uFE0F', '\u{1F44D}', '\u{1F44E}', '\u{1F602}', '\u{1F62E}', '\u{1F525}']
+
+type SavedView =
+  | 'all'
+  | 'unread'
+  | 'hot'
+  | 'unanswered_24h'
+  | 'replied'
+  | 'live'
+
+const savedViewDefs: Array<{ id: SavedView; label: string; icon: typeof Bookmark }> = [
+  { id: 'all', label: 'All', icon: InboxIcon },
+  { id: 'unread', label: 'Unread', icon: Bell },
+  { id: 'hot', label: 'Hot leads', icon: Flame },
+  { id: 'unanswered_24h', label: 'Unanswered 24h', icon: AlertTriangle },
+  { id: 'replied', label: 'Replied', icon: MessageCircle },
+  { id: 'live', label: 'Live only', icon: Wifi },
+]
+
+function passesSavedView(c: Conversation, view: SavedView, messagesForConv: Message[]): boolean {
+  switch (view) {
+    case 'unread':
+      return c.unreadCount > 0
+    case 'hot':
+      return (c.labels || []).some((l) => l.toLowerCase().includes('hot'))
+    case 'unanswered_24h': {
+      if (!c.lastInboundAt) return false
+      const lastOut = messagesForConv
+        .filter((m) => m.direction === 'outbound')
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      const inboundAt = new Date(c.lastInboundAt).getTime()
+      const ageHrs = (Date.now() - inboundAt) / 36e5
+      if (ageHrs > 24) return false
+      if (!lastOut) return true
+      return new Date(lastOut.createdAt).getTime() < inboundAt
+    }
+    case 'replied':
+      return messagesForConv.some((m) => m.direction === 'inbound')
+    case 'live':
+      return Boolean(c.isLive)
+    default:
+      return true
+  }
+}
+
+function channelIcon(ch: OutreachChannel) {
+  if (ch === 'whatsapp') return <MessageCircle size={13} />
+  if (ch === 'instagram') return <IgIcon size={13} />
+  return <Mail size={13} />
+}
+function channelBadgeLetter(ch: OutreachChannel) {
+  if (ch === 'whatsapp') return 'W'
+  if (ch === 'instagram') return 'I'
+  return 'E'
+}
+
 export function InboxV2() {
   const { state, actions } = useWhatsAppStore()
   const [search, setSearch] = useState('')
-  const [tab, setTab] = useState<'all' | 'whatsapp' | 'email'>('all')
+  const [tab, setTab] = useState<'all' | OutreachChannel>('all')
   const [labelFilter, setLabelFilter] = useState<string | null>(null)
+  const [savedView, setSavedView] = useState<SavedView>('all')
   const [syncing, setSyncing] = useState(false)
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
@@ -65,6 +130,16 @@ export function InboxV2() {
     return () => window.clearInterval(id)
   }, [])
 
+  const messagesByConv = useMemo(() => {
+    const map = new Map<string, Message[]>()
+    for (const m of state.messages) {
+      const list = map.get(m.conversationId) || []
+      list.push(m)
+      map.set(m.conversationId, list)
+    }
+    return map
+  }, [state.messages])
+
   const allLabels = useMemo(() => {
     const s = new Set<string>()
     for (const c of state.conversations) for (const l of c.labels || []) s.add(l)
@@ -75,6 +150,9 @@ export function InboxV2() {
     return state.conversations
       .filter((c) => (tab === 'all' ? true : c.channel === tab))
       .filter((c) => (labelFilter ? (c.labels || []).includes(labelFilter) : true))
+      .filter((c) =>
+        passesSavedView(c, savedView, messagesByConv.get(c.id) || []),
+      )
       .filter((c) => {
         if (!search) return true
         const inf = state.influencers.find((i) => i.id === c.influencerId)
@@ -87,7 +165,7 @@ export function InboxV2() {
         )
       })
       .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
-  }, [state.conversations, state.influencers, tab, labelFilter, search])
+  }, [state.conversations, state.influencers, tab, labelFilter, savedView, search, messagesByConv])
 
   const selected = state.conversations.find((c) => c.id === state.selectedConversationId)
 
@@ -197,6 +275,27 @@ export function InboxV2() {
             </div>
           </div>
         </div>
+
+        {/* Saved views strip */}
+        <div className="rx-saved-views" data-testid="saved-views">
+          <div className="rx-text-xs rx-muted" style={{ marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Filter size={11} /> Views
+          </div>
+          {savedViewDefs.map((v) => {
+            const Icon = v.icon
+            return (
+              <button
+                key={v.id}
+                type="button"
+                className={`rx-chip${savedView === v.id ? ' is-active' : ''}`}
+                onClick={() => setSavedView(v.id)}
+                data-testid={`view-${v.id}`}
+              >
+                <Icon size={11} /> {v.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Bulk action bar */}
@@ -258,8 +357,9 @@ export function InboxV2() {
             <div className="rx-row" style={{ gap: 6, alignItems: 'center' }}>
               <div className="rx-seg">
                 <button className={`rx-seg-btn${tab === 'all' ? ' is-active' : ''}`} onClick={() => setTab('all')}>All</button>
-                <button className={`rx-seg-btn${tab === 'whatsapp' ? ' is-active' : ''}`} onClick={() => setTab('whatsapp')}>WhatsApp</button>
-                <button className={`rx-seg-btn${tab === 'email' ? ' is-active' : ''}`} onClick={() => setTab('email')}>Email</button>
+                <button className={`rx-seg-btn${tab === 'whatsapp' ? ' is-active' : ''}`} onClick={() => setTab('whatsapp')} title="WhatsApp"><MessageCircle size={12} /></button>
+                <button className={`rx-seg-btn${tab === 'instagram' ? ' is-active' : ''}`} onClick={() => setTab('instagram')} title="Instagram"><IgIcon size={12} /></button>
+                <button className={`rx-seg-btn${tab === 'email' ? ' is-active' : ''}`} onClick={() => setTab('email')} title="Email"><Mail size={12} /></button>
               </div>
               <button
                 type="button"
@@ -295,8 +395,8 @@ export function InboxV2() {
           {conversations.length === 0 ? (
             <div style={{ padding: 32 }}>
               <EmptyState
-                title="No conversations yet"
-                body="Once creators reply to your outreach, their chats show up here."
+                title="No conversations match"
+                body="Try switching the saved view or clearing filters."
               />
             </div>
           ) : (
@@ -309,6 +409,7 @@ export function InboxV2() {
                   key={c.id}
                   className={`rx-conv${state.selectedConversationId === c.id ? ' is-selected' : ''}`}
                   data-testid={`conv-${c.id}`}
+                  data-channel={c.channel}
                   onClick={() => {
                     if (selectMode) toggleSelected(c.id)
                     else actions.selectConversation(c.id)
@@ -331,8 +432,8 @@ export function InboxV2() {
                   ) : (
                     <div className="rx-conv-avatar">
                       {initials}
-                      <span className={`rx-conv-badge ${c.channel === 'whatsapp' ? 'wa' : 'email'}`}>
-                        {c.channel === 'whatsapp' ? 'W' : 'E'}
+                      <span className={`rx-conv-badge ${c.channel}`}>
+                        {channelBadgeLetter(c.channel)}
                       </span>
                     </div>
                   )}
@@ -341,7 +442,7 @@ export function InboxV2() {
                       <div className="rx-conv-name">
                         {inf?.name || 'Unknown'}
                         {c.isLive ? (
-                          <span className="rx-live-tag mono" title="Live from WhatsApp Cloud API">LIVE</span>
+                          <span className="rx-live-tag mono" title="Live from the Cloud API">LIVE</span>
                         ) : null}
                       </div>
                       <div className="rx-conv-time">
@@ -402,14 +503,10 @@ function InboundMedia({ msg }: { msg: Message }) {
     )
   }
   if (msg.mediaKind === 'video') {
-    return (
-      <video src={url} controls className="rx-msg-media video" preload="metadata" />
-    )
+    return <video src={url} controls className="rx-msg-media video" preload="metadata" />
   }
   if (msg.mediaKind === 'audio') {
-    return (
-      <audio src={url} controls className="rx-msg-audio" preload="metadata" />
-    )
+    return <audio src={url} controls className="rx-msg-audio" preload="metadata" />
   }
   if (msg.mediaKind === 'document') {
     return (
@@ -420,6 +517,99 @@ function InboundMedia({ msg }: { msg: Message }) {
     )
   }
   return null
+}
+
+function MessageBubble({
+  msg,
+  channel,
+  onReact,
+  onRemoveReaction,
+}: {
+  msg: Message
+  channel: OutreachChannel
+  onReact: (msgId: string, emoji: string) => void
+  onRemoveReaction: (msgId: string) => void
+}) {
+  const [showReactMenu, setShowReactMenu] = useState(false)
+  const myReaction = (msg.reactions || []).find((r) => r.by === 'me')
+
+  return (
+    <div className={`rx-msg-row ${msg.direction === 'outbound' ? 'out' : 'in'}`}>
+      <div className="rx-msg-wrap">
+        {msg.subject ? (
+          <div className="rx-text-xs rx-muted rx-mb-2">
+            <strong>{msg.subject}</strong>
+          </div>
+        ) : null}
+        {msg.mediaId ? <InboundMedia msg={msg} /> : null}
+        {msg.body ? <div className="rx-msg" data-channel={channel}>{msg.body}</div> : null}
+        <div className="rx-msg-meta">
+          <span>
+            {new Date(msg.createdAt).toLocaleTimeString('en', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+          {msg.direction === 'outbound' ? (
+            <>
+              <span>·</span>
+              <span>{msg.status}</span>
+              {msg.status === 'read' ? (
+                <CheckCheck size={12} />
+              ) : msg.status === 'delivered' ? (
+                <Check size={12} />
+              ) : msg.status === 'failed' ? (
+                <AlertTriangle size={12} />
+              ) : null}
+            </>
+          ) : null}
+        </div>
+        {msg.reactions && msg.reactions.length > 0 && (
+          <div className="rx-msg-reactions">
+            {msg.reactions.map((r, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`rx-msg-reaction${r.by === 'me' ? ' mine' : ''}`}
+                onClick={() => r.by === 'me' && onRemoveReaction(msg.id)}
+                title={r.by === 'me' ? 'Remove your reaction' : 'Reaction from creator'}
+              >
+                {r.emoji}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="rx-msg-actions">
+          <button
+            type="button"
+            className="rx-msg-react-btn"
+            onClick={() => setShowReactMenu((v) => !v)}
+            title="React"
+            aria-label="React to message"
+          >
+            <Heart size={12} />
+          </button>
+          {showReactMenu && (
+            <div className="rx-react-menu" onMouseLeave={() => setShowReactMenu(false)}>
+              {REACTION_QUICKPICK.map((em) => (
+                <button
+                  key={em}
+                  type="button"
+                  className={`rx-react-menu-btn${myReaction?.emoji === em ? ' is-mine' : ''}`}
+                  onClick={() => {
+                    onReact(msg.id, em)
+                    setShowReactMenu(false)
+                  }}
+                >
+                  {em}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function Thread() {
@@ -440,7 +630,6 @@ function Thread() {
   const canReply = actions.canFreeformReply(conv.id)
   const windowOpen = conv.channel === 'email' || actions.isWithin24hWindow(conv.id)
 
-  // Auto-scroll to newest on message change / selection change
   const bodyRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const el = bodyRef.current
@@ -461,7 +650,12 @@ function Thread() {
         const ok = actions.sendReply(conv.id, text)
         if (!ok) {
           setDraft(text)
-          actions.toast('Reply window closed — send a template first', 'error')
+          actions.toast(
+            conv.channel === 'email'
+              ? 'Could not send'
+              : 'Reply window closed — send a template first',
+            'error',
+          )
         }
       }
     } finally {
@@ -486,15 +680,17 @@ function Thread() {
   }
 
   const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
+  const canReact = !conv.isLive || conv.channel !== 'whatsapp'
+  const handle = inf?.handle?.startsWith('@') ? inf.handle : inf?.handle ? `@${inf.handle}` : ''
 
   return (
-    <div className="rx-thread">
+    <div className="rx-thread" data-channel={conv.channel}>
       <div className="rx-thread-head">
         <div className="rx-thread-head-left">
           <div className="rx-conv-avatar" style={{ width: 40, height: 40 }}>
             {initials}
-            <span className={`rx-conv-badge ${conv.channel === 'whatsapp' ? 'wa' : 'email'}`}>
-              {conv.channel === 'whatsapp' ? 'W' : 'E'}
+            <span className={`rx-conv-badge ${conv.channel}`}>
+              {channelBadgeLetter(conv.channel)}
             </span>
           </div>
           <div>
@@ -503,11 +699,13 @@ function Thread() {
               {conv.isLive ? <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>LIVE</span> : null}
             </div>
             <div className="rx-text-xs rx-muted mono">
-              {conv.channel === 'whatsapp' ? inf?.phone : inf?.email}
+              {conv.channel === 'whatsapp' ? inf?.phone
+                : conv.channel === 'instagram' ? (handle || 'no handle')
+                : inf?.email}
             </div>
           </div>
         </div>
-        <div className="rx-row" style={{ gap: 6 }}>
+        <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {(conv.labels || []).map((l) => (
             <span key={l} className="rx-chip xs">
               <Tag size={9} /> {l}
@@ -574,50 +772,34 @@ function Thread() {
         </div>
       </div>
 
-      <div className="rx-thread-body" ref={bodyRef}>
+      <div className="rx-thread-body" ref={bodyRef} data-channel={conv.channel}>
         {messages.length === 0 ? (
           <div style={{ margin: 'auto', color: 'var(--text-3)' }}>
             {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
           </div>
         ) : (
           messages.map((m) => (
-            <div key={m.id} className={`rx-msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}>
-              <div>
-                {m.subject ? (
-                  <div className="rx-text-xs rx-muted rx-mb-2">
-                    <strong>{m.subject}</strong>
-                  </div>
-                ) : null}
-                {m.mediaId ? <InboundMedia msg={m} /> : null}
-                {m.body ? <div className="rx-msg">{m.body}</div> : null}
-                <div className="rx-msg-meta">
-                  <span>
-                    {new Date(m.createdAt).toLocaleTimeString('en', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
-                  {m.direction === 'outbound' ? (
-                    <>
-                      <span>·</span>
-                      <span>{m.status}</span>
-                      {m.status === 'read' ? (
-                        <CheckCheck size={12} />
-                      ) : m.status === 'delivered' ? (
-                        <Check size={12} />
-                      ) : m.status === 'failed' ? (
-                        <AlertTriangle size={12} />
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            </div>
+            <MessageBubble
+              key={m.id}
+              msg={m}
+              channel={conv.channel}
+              onReact={(id, em) => {
+                if (!canReact) {
+                  actions.toast(
+                    'Reactions on live WhatsApp threads need proxy support — UI ready.',
+                    'info',
+                  )
+                  return
+                }
+                actions.reactToMessage(id, em, 'me')
+              }}
+              onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
+            />
           ))
         )}
       </div>
 
-      <div className="rx-composer">
+      <div className="rx-composer" data-channel={conv.channel}>
         {conv.channel === 'whatsapp' && (
           <div className={`rx-window-note ${windowOpen ? 'open' : 'closed'}`}>
             <span>
@@ -626,6 +808,15 @@ function Thread() {
                   ? '● 24-hour reply window open · sending via WhatsApp Cloud API'
                   : '● 24-hour reply window open'
                 : '● Window closed — use a template'}
+            </span>
+          </div>
+        )}
+        {conv.channel === 'instagram' && (
+          <div className={`rx-window-note ig ${windowOpen ? 'open' : 'closed'}`}>
+            <span>
+              {windowOpen
+                ? '● Instagram 24-hour DM window open'
+                : '● DM window closed — send a story reply or template'}
             </span>
           </div>
         )}
@@ -655,7 +846,7 @@ function Thread() {
               type="button"
               className="rx-icon-btn"
               onClick={() => attachRef.current?.click()}
-              disabled={!canReply || (conv.channel === 'whatsapp' && conv.isLive)}
+              disabled={!canReply}
               title={
                 conv.channel === 'whatsapp' && conv.isLive
                   ? 'Media send is pending backend support — coming soon'
@@ -670,11 +861,20 @@ function Thread() {
               type="file"
               accept="image/*,video/*,application/pdf"
               style={{ display: 'none' }}
-              onChange={() => {
-                actions.toast(
-                  'Media send requires proxy support — UI ready, endpoint pending',
-                  'info',
-                )
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                if (conv.channel === 'whatsapp' && conv.isLive) {
+                  actions.toast(
+                    'WhatsApp media send requires proxy support — UI ready, endpoint pending',
+                    'info',
+                  )
+                } else {
+                  // Local mocked attach preview only
+                  const url = URL.createObjectURL(file)
+                  actions.toast(`Attached ${file.name} (mock preview)`, 'info')
+                  window.open(url, '_blank', 'noopener')
+                }
                 if (attachRef.current) attachRef.current.value = ''
               }}
             />

@@ -1,4 +1,4 @@
-export type OutreachChannel = 'whatsapp' | 'email'
+export type OutreachChannel = 'whatsapp' | 'email' | 'instagram'
 export type TemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION'
 export type TemplateStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISABLED' | 'ACTIVE'
 export type ConversationStatus = 'open' | 'pending' | 'resolved'
@@ -84,6 +84,18 @@ export interface EmailAccount {
   provider: EmailProvider
   domain: string
   verified: boolean
+  connectedAt: string
+}
+
+export interface InstagramAccount {
+  id: string
+  organizationId: string
+  /** Instagram handle without the @ */
+  handle: string
+  /** Business account display name */
+  displayName: string
+  /** Meta business asset id (mocked) */
+  igUserId: string
   connectedAt: string
 }
 
@@ -200,6 +212,8 @@ export interface Message {
   mediaMime?: string | null
   mediaKind?: 'image' | 'video' | 'audio' | 'document' | 'sticker' | null
   caption?: string | null
+  /** Emoji reactions from either side (mocked for non-live channels) */
+  reactions?: Array<{ by: 'me' | 'them'; emoji: string; at: string }>
 }
 
 export interface Conversation {
@@ -208,6 +222,7 @@ export interface Conversation {
   channel: OutreachChannel
   phoneNumberId?: string
   emailAccountId?: string
+  instagramAccountId?: string
   influencerId: string
   /**
    * Unified thread is org+channel+account+influencer (WhatsApp reality).
@@ -245,6 +260,7 @@ export interface CampaignAnalytics {
   campaignId: string
   whatsapp: ChannelMetrics
   email: ChannelMetrics
+  instagram: ChannelMetrics
 }
 
-export type ConnectionMode = 'none' | 'whatsapp' | 'email' | 'both'
+export type ConnectionMode = 'none' | 'whatsapp' | 'email' | 'instagram' | 'both'

@@ -24,7 +24,14 @@ Command palette (⌘K) provides fast navigation & primary actions from anywhere.
 - **localStorage persistence** — store + Quick Send draft state (template, bindings, recipients)
 
 ### Inbox
-- **Unified inbox** (WhatsApp + Email) with per-creator threads
+- **Unified inbox** — WhatsApp + Instagram + Email, per-creator threads
+- **Native brand themes per channel** — the thread view retextures the head, background, and message bubbles to feel like the real app:
+  - **WhatsApp**: dark green header, cream chat bg with subtle green sheen, mint outbound bubbles + white inbound
+  - **Instagram**: authentic purple → pink → orange gradient header, gray inbound + gradient outbound bubbles with soft glow
+  - **Gmail**: clean white header, light blue-gray bg, white card bubbles with Gmail red/blue left-border accents
+- **Saved views strip** — All / Unread / Hot leads / Unanswered 24h / Replied / Live only (one-click triage)
+- **Message reactions** — hover-reveal heart icon, quick-pick emoji strip, reactions render as chips under the bubble; live WhatsApp threads show a friendly gate until proxy adds `messages/reaction`
+- **Instagram DM** — connect drawer (Onboarding + Settings), Instagram-live sidebar dot, IG conversations respect the 24h DM window
 - **Live WhatsApp Cloud API polling** — 15s poll of `/whatsapp-outreach/inbox` merges threads + messages into local state without breaking mock data
 - **Live indicator** in Inbox header (pulsing dot, last-synced label, error surface, sync-now + pause/resume)
 - **LIVE badge** on threads sourced from the WhatsApp Cloud API
@@ -35,9 +42,9 @@ Command palette (⌘K) provides fast navigation & primary actions from anywhere.
 - **Bulk actions** — multi-select mode toggle, bulk Resolve, bulk Assign to a team member
 - **Emoji picker** — dependency-free curated picker (Smileys / Reactions / Work) embedded into the composer
 - **Inbound media rendering** — images / video / audio / documents / stickers hydrated from `/whatsapp-outreach/media/:id` and rendered inline in the thread
-- **Attachment UI (outbound)** — file picker mounted but explicitly gated behind proxy support with a friendly toast; ready to enable the moment the proxy adds a media-send endpoint
+- **Attachment UI (outbound)** — file picker mounted; non-live channels get a mock preview, live WhatsApp gets a friendly "proxy support pending" toast
 - **Optimistic reply** — input clears instantly; error only if store rejects (24h window closed)
-- **24h WhatsApp reply window** indicator with warning state
+- **24h reply-window indicator** for WhatsApp and Instagram
 - **Campaign context** shown on threads (multi-campaign safe)
 - **Simulate inbound** for demo testing (only on non-live threads)
 - **Auto-scroll to newest** on message/thread change
@@ -105,4 +112,10 @@ Use **Save to GitHub** in the chat input when ready.
   - Inbound media rendering (image / video / audio / document / sticker) via `/whatsapp-outreach/media/:id`.
   - Dark mode (Light / Dark / System) via CSS variables.
   - Attachment button wired (file picker) but gated with a friendly toast until the proxy exposes media-send endpoints.
-  - Updated files: `src/store/WhatsAppStore.tsx`, `src/pages/InboxV2.tsx`, `src/pages/TemplatesLib.tsx`, `src/components/CreateTemplateModal.tsx`, `src/components/SettingsDrawer.tsx`, `src/components/EmojiPicker.tsx` (new), `src/lib/api.ts`, `src/types.ts`, `src/index.css`.
+- **2026-07-25 (final)** — Instagram + native brand themes + reactions:
+  - Instagram DM as a first-class channel: connect drawers (Onboarding + Settings), Instagram-live sidebar dot, IG tab in Inbox, IG 24h DM window rule. Sends are local/mocked until the proxy exposes `/instagram-outreach/messages`.
+  - Native per-channel Inbox themes — WhatsApp (green + cream), Instagram (purple/pink gradient), Gmail (white + red/blue accents). Driven by `data-channel` on the thread body + CSS variables; works in both light and dark themes.
+  - Saved views strip (All / Unread / Hot leads / Unanswered 24h / Replied / Live only).
+  - Emoji reactions on individual messages (hover heart → quick-pick), rendered as chips under bubbles.
+  - Fixed lucide-react's removed brand icons by shipping tiny inline SVG `IgIcon` / `WaIcon` in `BrandIcons.tsx`.
+  - Updated files: `src/types.ts`, `src/data/seed.ts`, `src/store/WhatsAppStore.tsx`, `src/pages/InboxV2.tsx`, `src/components/OnboardingSheet.tsx`, `src/components/SettingsDrawer.tsx`, `src/components/Layout.tsx`, `src/components/BrandIcons.tsx` (new), `src/index.css`.

@@ -1,13 +1,19 @@
 import { CheckCircle2, Mail, MessageCircle, Moon, Plus, Sun, Trash2, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { IgIcon } from './BrandIcons'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import { Drawer } from './Drawer'
-import { WaConnectDrawer, EmailConnectDrawer } from './OnboardingSheet'
+import {
+  EmailConnectDrawer,
+  InstagramConnectDrawer,
+  WaConnectDrawer,
+} from './OnboardingSheet'
 
 export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, actions } = useWhatsAppStore()
   const [waDrawer, setWaDrawer] = useState(false)
   const [emailDrawer, setEmailDrawer] = useState(false)
+  const [igDrawer, setIgDrawer] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newBody, setNewBody] = useState('')
 
@@ -53,6 +59,49 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
                     </div>
                     <span className="rx-badge success">
                       <CheckCircle2 size={11} /> {n.qualityRating}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Instagram */}
+          <div className="rx-card compact rx-mb-2">
+            <div className="rx-row">
+              <div className="rx-connect-icon ig">
+                <IgIcon size={18} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div className="rx-card-title">Instagram DM</div>
+                <div className="rx-card-sub">
+                  {state.instagramAccounts.length
+                    ? `${state.instagramAccounts.length} account${state.instagramAccounts.length > 1 ? 's' : ''} connected`
+                    : 'Not connected'}
+                </div>
+              </div>
+              <button type="button" className="rx-btn secondary sm" onClick={() => setIgDrawer(true)}>
+                <Plus size={14} /> Add account
+              </button>
+            </div>
+            {state.instagramAccounts.length ? (
+              <div className="rx-col rx-gap" style={{ marginTop: 12 }}>
+                {state.instagramAccounts.map((n) => (
+                  <div
+                    key={n.id}
+                    className="rx-row"
+                    style={{
+                      padding: '10px 12px',
+                      background: 'var(--surface-2)',
+                      borderRadius: 8,
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{n.displayName}</div>
+                      <div className="mono rx-text-xs rx-muted">@{n.handle}</div>
+                    </div>
+                    <span className="rx-badge success">
+                      <CheckCircle2 size={11} /> Live
                     </span>
                   </div>
                 ))}
@@ -231,6 +280,7 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
 
       <WaConnectDrawer open={waDrawer} onClose={() => setWaDrawer(false)} />
       <EmailConnectDrawer open={emailDrawer} onClose={() => setEmailDrawer(false)} />
+      <InstagramConnectDrawer open={igDrawer} onClose={() => setIgDrawer(false)} />
     </>
   )
 }

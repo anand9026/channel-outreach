@@ -20,6 +20,7 @@ import {
   seedConversations,
   seedEmailAccounts,
   seedInfluencers,
+  seedInstagramAccounts,
   seedMessages,
   seedMyCreatorIds,
   seedOrganization,
@@ -53,6 +54,7 @@ import type {
   EmailAccount,
   EmailProvider,
   Influencer,
+  InstagramAccount,
   Message,
   OutreachChannel,
   TabId,
@@ -78,6 +80,7 @@ export interface AppState {
   templates: Template[]
   whatsAppNumbers: WhatsAppNumber[]
   emailAccounts: EmailAccount[]
+  instagramAccounts: InstagramAccount[]
   channels: CampaignChannel[]
   conversations: Conversation[]
   messages: Message[]
@@ -93,6 +96,7 @@ export interface AppState {
   connectStep: number
   connectKind: OutreachChannel
   emailModalOpen: boolean
+  instagramModalOpen: boolean
   liveInbox: {
     /** Whether the 15s polling loop is active */
     polling: boolean
@@ -122,6 +126,7 @@ type Action =
   | { type: 'OPEN_CONNECT'; open: boolean; kind?: OutreachChannel }
   | { type: 'SET_CONNECT_STEP'; step: number }
   | { type: 'OPEN_EMAIL_CONNECT'; open: boolean }
+  | { type: 'OPEN_INSTAGRAM_CONNECT'; open: boolean }
   | {
       type: 'CONNECT_WHATSAPP'
       payload: {
@@ -141,6 +146,19 @@ type Action =
         domain: string
       }
     }
+  | {
+      type: 'CONNECT_INSTAGRAM'
+      payload: {
+        handle: string
+        displayName: string
+        igUserId: string
+      }
+    }
+  | {
+      type: 'REACT_TO_MESSAGE'
+      payload: { messageId: string; emoji: string; by: 'me' | 'them' }
+    }
+  | { type: 'REMOVE_REACTION'; messageId: string; by: 'me' | 'them' }
   | {
       type: 'SUBMIT_TEMPLATE'
       payload: {
@@ -243,6 +261,7 @@ const initialState: AppState = {
   templates: seedTemplates,
   whatsAppNumbers: seedWhatsAppNumbers,
   emailAccounts: seedEmailAccounts,
+  instagramAccounts: seedInstagramAccounts,
   channels: seedChannels,
   conversations: seedConversations,
   messages: seedMessages,
@@ -257,6 +276,7 @@ const initialState: AppState = {
   connectStep: 0,
   connectKind: 'whatsapp',
   emailModalOpen: false,
+  instagramModalOpen: false,
   liveInbox: {
     polling: true,
     lastSyncedAt: null,
@@ -333,12 +353,14 @@ function mapMediaKind(
   return null
 }
 
-export function connectionMode(state: Pick<AppState, 'whatsAppNumbers' | 'emailAccounts'>): ConnectionMode {
+export function connectionMode(state: Pick<AppState, 'whatsAppNumbers' | 'emailAccounts' | 'instagramAccounts'>): ConnectionMode {
   const wa = state.whatsAppNumbers.length > 0
   const em = state.emailAccounts.length > 0
-  if (wa && em) return 'both'
+  const ig = state.instagramAccounts.length > 0
+  if ((wa && em) || (wa && ig) || (em && ig)) return 'both'
   if (wa) return 'whatsapp'
   if (em) return 'email'
+  if (ig) return 'instagram'
   return 'none'
 }
 
@@ -416,6 +438,7 @@ function bumpAnalytics(
       ...a,
       whatsapp: { ...a.whatsapp },
       email: { ...a.email },
+      instagram: { ...a.instagram },
     }
     patch(next[channel])
     return next
@@ -456,6 +479,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, connectStep: action.step }
     case 'OPEN_EMAIL_CONNECT':
       return { ...state, emailModalOpen: action.open }
+    case 'OPEN_INSTAGRAM_CONNECT':
+      return { ...state, instagramModalOpen: action.open }
     case 'CONNECT_WHATSAPP': {
       const number: WhatsAppNumber = {
         id: uid('wa'),
@@ -495,6 +520,45 @@ function reducer(state: AppState, action: Action): AppState {
         activeTab: 'floor',
       }
     }
+    case 'CONNECT_INSTAGRAM': {
+      const account: InstagramAccount = {
+        id: uid('ig'),
+        organizationId: ORG_ID,
+        handle: action.payload.handle.replace(/^@/, ''),
+        displayName: action.payload.displayName,
+        igUserId: action.payload.igUserId,
+        connectedAt: nowIso(),
+      }
+      return {
+        ...state,
+        instagramAccounts: [...state.instagramAccounts, account],
+        instagramModalOpen: false,
+        activeTab: 'floor',
+      }
+    }
+    case 'REACT_TO_MESSAGE': {
+      const { messageId, emoji, by } = action.payload
+      return {
+        ...state,
+        messages: state.messages.map((m) => {
+          if (m.id !== messageId) return m
+          const others = (m.reactions || []).filter((r) => r.by !== by)
+          return {
+            ...m,
+            reactions: [...others, { by, emoji, at: nowIso() }],
+          }
+        }),
+      }
+    }
+    case 'REMOVE_REACTION':
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.messageId
+            ? { ...m, reactions: (m.reactions || []).filter((r) => r.by !== action.by) }
+            : m,
+        ),
+      }
     case 'SUBMIT_TEMPLATE': {
       const isEmail = action.payload.channel === 'email'
       const template: Template = {
@@ -1105,7 +1169,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SEND_REPLY': {
       const conv = state.conversations.find((c) => c.id === action.conversationId)
       if (!conv) return state
-      if (conv.channel === 'whatsapp') {
+      if (conv.channel === 'whatsapp' || conv.channel === 'instagram') {
         if (!conv.lastInboundAt) return state
         if (Date.now() - new Date(conv.lastInboundAt).getTime() >= 24 * 60 * 60 * 1000) {
           return state
@@ -1123,7 +1187,11 @@ function reducer(state: AppState, action: Action): AppState {
         isTemplate: false,
         createdAt: ts,
         metaMessageId:
-          conv.channel === 'whatsapp' ? `wamid.${uid('meta')}` : `email.${uid('out')}`,
+          conv.channel === 'whatsapp'
+            ? `wamid.${uid('meta')}`
+            : conv.channel === 'instagram'
+              ? `ig.${uid('meta')}`
+              : `email.${uid('out')}`,
       }
       return {
         ...state,
@@ -1586,6 +1654,7 @@ interface StoreContextValue {
     openConnect: (open: boolean, kind?: OutreachChannel) => void
     setConnectStep: (step: number) => void
     openEmailConnect: (open: boolean) => void
+    openInstagramConnect: (open: boolean) => void
     connectWhatsApp: (data: {
       displayName: string
       phoneDisplay: string
@@ -1599,6 +1668,13 @@ interface StoreContextValue {
       provider: EmailProvider
       domain: string
     }) => void
+    connectInstagram: (data: {
+      handle: string
+      displayName: string
+      igUserId: string
+    }) => void
+    reactToMessage: (messageId: string, emoji: string, by?: 'me' | 'them') => void
+    removeReaction: (messageId: string, by?: 'me' | 'them') => void
     submitTemplate: (data: {
       channel: OutreachChannel
       name: string
@@ -2075,6 +2151,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       openConnect: (open, kind) => dispatch({ type: 'OPEN_CONNECT', open, kind }),
       setConnectStep: (step) => dispatch({ type: 'SET_CONNECT_STEP', step }),
       openEmailConnect: (open) => dispatch({ type: 'OPEN_EMAIL_CONNECT', open }),
+      openInstagramConnect: (open) => dispatch({ type: 'OPEN_INSTAGRAM_CONNECT', open }),
       connectWhatsApp: (data) => {
         dispatch({ type: 'CONNECT_WHATSAPP', payload: data })
         toast('WhatsApp Business number connected', 'success')
@@ -2083,6 +2160,14 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'CONNECT_EMAIL', payload: data })
         toast('Email sending domain connected', 'success')
       },
+      connectInstagram: (data) => {
+        dispatch({ type: 'CONNECT_INSTAGRAM', payload: data })
+        toast('Instagram Business account connected', 'success')
+      },
+      reactToMessage: (messageId, emoji, by = 'me') =>
+        dispatch({ type: 'REACT_TO_MESSAGE', payload: { messageId, emoji, by } }),
+      removeReaction: (messageId, by = 'me') =>
+        dispatch({ type: 'REMOVE_REACTION', messageId, by }),
       submitTemplate: (data) => {
         const id = uid('tpl')
         const vars = extractVariables(`${data.subject ?? ''} ${data.body}`)

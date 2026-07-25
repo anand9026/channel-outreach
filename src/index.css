@@ -2688,3 +2688,266 @@ a {
 
 /* Utility */
 .rx-danger { color: var(--danger); }
+
+/* =========================================================================
+   Instagram brand tokens
+   ========================================================================= */
+:root {
+  --ig: #e1306c;
+  --ig-2: #833ab4;
+  --ig-3: #f77737;
+  --ig-4: #fcaf45;
+  --ig-soft: #fdecef;
+  --ig-gradient: linear-gradient(135deg, #833ab4 0%, #e1306c 45%, #f77737 80%, #fcaf45 100%);
+}
+:root[data-theme='dark'] {
+  --ig-soft: rgba(225, 48, 108, 0.16);
+}
+.rx-dot.is-live-ig { background: var(--ig); box-shadow: 0 0 0 3px rgba(225, 48, 108, 0.16); }
+.rx-connect-icon.ig { background: var(--ig-gradient); color: #fff; }
+.rx-conv-badge.instagram, .rx-conv-badge.ig {
+  background: var(--ig-gradient);
+  color: #fff;
+}
+.rx-conv-badge.whatsapp { background: var(--wa); }
+.rx-conv-badge.email { background: var(--email); }
+.rx-badge.instagram { background: var(--ig-soft); color: var(--ig); }
+.rx-connect-grid.three { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 960px) {
+  .rx-connect-grid.three { grid-template-columns: 1fr; }
+}
+
+/* =========================================================================
+   Saved views strip
+   ========================================================================= */
+.rx-saved-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+/* =========================================================================
+   Channel-themed threads (WhatsApp / Instagram / Gmail)
+   ========================================================================= */
+
+/* --- WhatsApp look --- */
+.rx-thread[data-channel='whatsapp'] .rx-thread-head {
+  background: #075E54;
+  color: #fff;
+  border-bottom: 1px solid #054d43;
+}
+.rx-thread[data-channel='whatsapp'] .rx-thread-head .rx-text-xs,
+.rx-thread[data-channel='whatsapp'] .rx-thread-head .rx-muted {
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+.rx-thread[data-channel='whatsapp'] .rx-thread-head .rx-btn.secondary {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.rx-thread[data-channel='whatsapp'] .rx-thread-head .rx-btn.ghost {
+  color: rgba(255, 255, 255, 0.85);
+}
+.rx-thread[data-channel='whatsapp'] .rx-thread-head .rx-chip {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.rx-thread-body[data-channel='whatsapp'] {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(37, 211, 102, 0.08) 0, transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(37, 211, 102, 0.06) 0, transparent 50%),
+    #ECE5DD;
+}
+:root[data-theme='dark'] .rx-thread-body[data-channel='whatsapp'] {
+  background: #0b141a;
+}
+.rx-msg[data-channel='whatsapp'] {
+  background: #ffffff;
+  color: #111;
+  border-radius: 8px;
+  box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  padding: 8px 10px;
+}
+:root[data-theme='dark'] .rx-msg[data-channel='whatsapp'] {
+  background: #202c33;
+  color: #e9edef;
+}
+.rx-msg-row.out .rx-msg[data-channel='whatsapp'] {
+  background: #DCF8C6;
+  color: #111;
+}
+:root[data-theme='dark'] .rx-msg-row.out .rx-msg[data-channel='whatsapp'] {
+  background: #005c4b;
+  color: #e9edef;
+}
+
+/* --- Instagram look --- */
+.rx-thread[data-channel='instagram'] .rx-thread-head {
+  background: var(--ig-gradient);
+  color: #fff;
+  border-bottom: none;
+}
+.rx-thread[data-channel='instagram'] .rx-thread-head .rx-text-xs,
+.rx-thread[data-channel='instagram'] .rx-thread-head .rx-muted {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+.rx-thread[data-channel='instagram'] .rx-thread-head .rx-btn.secondary,
+.rx-thread[data-channel='instagram'] .rx-thread-head .rx-btn.ghost {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.rx-thread[data-channel='instagram'] .rx-thread-head .rx-chip {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.rx-thread-body[data-channel='instagram'] {
+  background: #fafafa;
+}
+:root[data-theme='dark'] .rx-thread-body[data-channel='instagram'] {
+  background: #0a0a0a;
+}
+.rx-msg[data-channel='instagram'] {
+  background: #efefef;
+  color: #111;
+  border-radius: 22px;
+  padding: 9px 14px;
+  max-width: 100%;
+}
+:root[data-theme='dark'] .rx-msg[data-channel='instagram'] {
+  background: #262626;
+  color: #f5f5f4;
+}
+.rx-msg-row.out .rx-msg[data-channel='instagram'] {
+  background: var(--ig-gradient);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(225, 48, 108, 0.25);
+}
+
+/* --- Gmail (email) look --- */
+.rx-thread[data-channel='email'] .rx-thread-head {
+  background: #ffffff;
+  border-bottom: 1px solid #eaeaea;
+}
+:root[data-theme='dark'] .rx-thread[data-channel='email'] .rx-thread-head {
+  background: #17181a;
+  border-bottom-color: #26282a;
+}
+.rx-thread-body[data-channel='email'] {
+  background: #f6f8fc;
+  padding: 20px 24px !important;
+}
+:root[data-theme='dark'] .rx-thread-body[data-channel='email'] {
+  background: #0e0f10;
+}
+.rx-msg-row.out .rx-msg[data-channel='email'],
+.rx-msg-row.in .rx-msg[data-channel='email'] {
+  background: #ffffff;
+  color: #111;
+  border-radius: 8px;
+  border-left: 3px solid #ea4335;
+  padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.15), 0 1px 3px 1px rgba(60, 64, 67, 0.08);
+  max-width: 100%;
+}
+:root[data-theme='dark'] .rx-msg-row.in .rx-msg[data-channel='email'],
+:root[data-theme='dark'] .rx-msg-row.out .rx-msg[data-channel='email'] {
+  background: #1e1f21;
+  color: #f5f5f4;
+}
+.rx-msg-row.out .rx-msg[data-channel='email'] {
+  border-left-color: var(--email);
+}
+.rx-composer[data-channel='email'] .rx-textarea {
+  min-height: 60px;
+}
+
+/* Instagram DM window note */
+.rx-window-note.ig.open {
+  background: var(--ig-soft);
+  color: var(--ig);
+}
+.rx-window-note.ig.closed {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* Reactions on messages */
+.rx-msg-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.rx-msg-row.out .rx-msg-wrap { align-self: flex-end; }
+.rx-msg-actions {
+  position: absolute;
+  top: 4px;
+  right: -28px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.rx-msg-row.out .rx-msg-actions { right: auto; left: -28px; }
+.rx-msg-row:hover .rx-msg-actions { opacity: 1; }
+.rx-msg-react-btn {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  display: grid; place-items: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+.rx-msg-react-btn:hover { color: var(--accent); }
+.rx-react-menu {
+  position: absolute;
+  top: 24px;
+  right: -12px;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 6px;
+  display: flex;
+  gap: 4px;
+  box-shadow: var(--shadow-3);
+}
+.rx-msg-row.out .rx-react-menu { right: auto; left: -12px; }
+.rx-react-menu-btn {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+  line-height: 1;
+}
+.rx-react-menu-btn:hover { background: var(--surface-2); }
+.rx-react-menu-btn.is-mine { background: var(--accent-soft); }
+.rx-msg-reactions {
+  margin-top: 3px;
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.rx-msg-row.out .rx-msg-reactions { justify-content: flex-end; }
+.rx-msg-reaction {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: default;
+}
+.rx-msg-reaction.mine {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  cursor: pointer;
+}

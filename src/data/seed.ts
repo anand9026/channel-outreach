@@ -8,6 +8,7 @@ import type {
   Conversation,
   EmailAccount,
   Influencer,
+  InstagramAccount,
   Message,
   Organization,
   TeamMember,
@@ -327,6 +328,7 @@ export function conversationKey(
 export const seedWhatsAppNumbers: WhatsAppNumber[] = []
 
 export const seedEmailAccounts: EmailAccount[] = []
+export const seedInstagramAccounts: InstagramAccount[] = []
 export const seedChannels: CampaignChannel[] = []
 export const seedConversations: Conversation[] = []
 export const seedMessages: Message[] = []
@@ -335,4 +337,5 @@ export const seedAnalytics: CampaignAnalytics[] = seedCampaigns.map((c) => ({
   campaignId: c.id,
   whatsapp: emptyMetrics(),
   email: emptyMetrics(),
+  instagram: emptyMetrics(),
 }))

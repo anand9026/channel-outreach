@@ -80,6 +80,13 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
           <div className="rx-conn-status">
             <span
+              className={`rx-dot${state.instagramAccounts.length ? ' is-live-ig' : ''}`}
+              aria-hidden
+            />
+            Instagram {state.instagramAccounts.length ? 'live' : 'not connected'}
+          </div>
+          <div className="rx-conn-status">
+            <span
               className={`rx-dot${state.emailAccounts.length ? ' is-live-email' : ''}`}
               aria-hidden
             />

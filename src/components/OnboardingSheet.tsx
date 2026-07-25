@@ -1,17 +1,19 @@
 import { CheckCircle2, Mail, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
+import { IgIcon } from './BrandIcons'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { Drawer } from './Drawer'
 
 /**
  * Full-viewport first-run onboarding.
  * Shown until at least one channel is connected.
- * Uses the same underlying connectWhatsApp / connectEmail store actions.
+ * Uses the same underlying connectWhatsApp / connectEmail / connectInstagram store actions.
  */
 export function OnboardingSheet() {
   const { state, actions } = useWhatsAppStore()
   const [waDrawer, setWaDrawer] = useState(false)
   const [emailDrawer, setEmailDrawer] = useState(false)
+  const [igDrawer, setIgDrawer] = useState(false)
   const mode = connectionMode(state)
 
   return (
@@ -20,11 +22,11 @@ export function OnboardingSheet() {
         <div className="rx-onboard-eyebrow">Welcome to Reelax Outreach</div>
         <h1 className="rx-onboard-title">Let&rsquo;s send your first message.</h1>
         <p className="rx-onboard-lead">
-          Connect a channel to start reaching creators. You can add the other one anytime — Reelax
+          Connect a channel to start reaching creators. You can add the others anytime — Reelax
           handles the sequencing, replies, and analytics in one place.
         </p>
 
-        <div className="rx-connect-grid">
+        <div className="rx-connect-grid three">
           <ConnectCard
             channel="wa"
             icon={<MessageCircle size={22} />}
@@ -32,6 +34,14 @@ export function OnboardingSheet() {
             body="Send approved templates and manage replies inside the 24-hour window. Uses your WABA phone number."
             connected={state.whatsAppNumbers.length > 0}
             onConnect={() => setWaDrawer(true)}
+          />
+          <ConnectCard
+            channel="ig"
+            icon={<IgIcon size={22} />}
+            title="Instagram DM"
+            body="Reach creators inside Instagram Direct — the native place they read pitches. Uses your IG Business account."
+            connected={state.instagramAccounts.length > 0}
+            onConnect={() => setIgDrawer(true)}
           />
           <ConnectCard
             channel="email"
@@ -81,6 +91,7 @@ export function OnboardingSheet() {
 
       <WaConnectDrawer open={waDrawer} onClose={() => setWaDrawer(false)} />
       <EmailConnectDrawer open={emailDrawer} onClose={() => setEmailDrawer(false)} />
+      <InstagramConnectDrawer open={igDrawer} onClose={() => setIgDrawer(false)} />
     </div>
   )
 }
@@ -93,7 +104,7 @@ function ConnectCard({
   connected,
   onConnect,
 }: {
-  channel: 'wa' | 'email'
+  channel: 'wa' | 'email' | 'ig'
   icon: React.ReactNode
   title: string
   body: string
@@ -306,6 +317,85 @@ export function EmailConnectDrawer({ open, onClose }: { open: boolean; onClose: 
           <label className="rx-label">Domain</label>
           <input className="rx-input" value={domain} onChange={(e) => setDomain(e.target.value)} />
           <div className="rx-help">SPF + DKIM must be set on the domain. We verify via SendGrid.</div>
+        </div>
+      </div>
+    </Drawer>
+  )
+}
+
+
+export function InstagramConnectDrawer({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  const { actions } = useWhatsAppStore()
+  const [handle, setHandle] = useState('@novabeauty')
+  const [displayName, setDisplayName] = useState('Nova Beauty')
+
+  const finish = () => {
+    actions.connectInstagram({
+      handle: handle.replace(/^@/, ''),
+      displayName,
+      igUserId: `ig_${Date.now().toString(36)}`,
+    })
+    onClose()
+  }
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title="Connect Instagram"
+      subtitle="Link your Instagram Business account to send DMs"
+      size="md"
+      footer={
+        <>
+          <button type="button" className="rx-btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rx-btn primary"
+            onClick={finish}
+            data-testid="ig-finish"
+          >
+            Connect Instagram
+          </button>
+        </>
+      }
+    >
+      <div className="rx-col rx-gap">
+        <div className="rx-field">
+          <label className="rx-label">Instagram handle</label>
+          <input
+            className="rx-input"
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            placeholder="@yourbrand"
+          />
+          <div className="rx-help">Must be an Instagram Business or Creator account.</div>
+        </div>
+        <div className="rx-field">
+          <label className="rx-label">Display name</label>
+          <input
+            className="rx-input"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </div>
+        <div
+          className="rx-card compact"
+          style={{ background: 'var(--surface-2)', fontSize: 12 }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Note</div>
+          <div className="rx-muted">
+            Instagram DM sending goes through Meta&rsquo;s Instagram Graph API. This UI is fully
+            wired for outreach + inbox, and switches to real sends the moment the backend proxy
+            exposes an <span className="mono">/instagram-outreach/messages</span> endpoint.
+          </div>
         </div>
       </div>
     </Drawer>
