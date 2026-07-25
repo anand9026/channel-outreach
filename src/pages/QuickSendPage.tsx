@@ -642,6 +642,62 @@ export function QuickSendPage() {
     actions.toast('Scheduled batch cancelled', 'info')
   }
 
+  /** Send the current template (with sample values) to the user's own number. */
+  const sendTest = async () => {
+    if (!selectedTemplate || waNumbers.length === 0) return
+    const self = waNumbers.find((n) => n.phoneNumberId === selectedPhoneNumberId) || waNumbers[0]
+    const selfPhone = normalizePhone(self.phoneDisplay)
+    if (selfPhone.length < 10) {
+      actions.toast('Could not derive test phone from your WA number', 'error')
+      return
+    }
+    const params = paramsFor(slots, bindings)
+    const preview = renderBody(bodyText, bindings)
+    try {
+      await sendWhatsAppTemplate({
+        to: selfPhone,
+        template_name: selectedTemplate.name,
+        language_code: selectedTemplate.language || 'en_US',
+        bodyParams: params.length ? params : undefined,
+        phone_number_id: self.phoneNumberId,
+        preview_body: preview,
+      })
+      actions.toast(`Test sent to ${self.phoneDisplay}`, 'success')
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Test send failed'
+      actions.toast(msg, 'error')
+    }
+  }
+
+  /** Restore only the FAILED recipients from a batch into the current draft, so user can retry. */
+  const retryFailed = (batchId: string) => {
+    const batch = batches.find((b) => b.id === batchId)
+    if (!batch) return
+    const failedOnly = batch.recipients
+      .filter((r) => r.status === 'failed')
+      .map<Recipient>((r) => ({ phone: r.phone, name: r.name, row: r.row, status: 'idle' }))
+    if (failedOnly.length === 0) {
+      actions.toast('No failed recipients to retry', 'info')
+      return
+    }
+    setTemplateId(batch.templateId)
+    if (batch.bindings) setBindings(batch.bindings)
+    // Detect if any recipients had CSV rows and rebuild headers
+    const headerSet = new Set<string>()
+    for (const r of failedOnly) if (r.row) Object.keys(r.row).forEach((k) => headerSet.add(k))
+    if (headerSet.size > 0) setCsvHeaders(Array.from(headerSet))
+    setRecipients(failedOnly)
+    setScheduleMode('now')
+    setExpandedBatch(null)
+    actions.toast(
+      `Loaded ${failedOnly.length} failed recipient${failedOnly.length === 1 ? '' : 's'} — review and hit Send`,
+      'success',
+    )
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   /** Execute a saved scheduled batch: run all recipients using its embedded config. */
   const executeScheduledBatch = async (batchId: string) => {
     const batch = batches.find((b) => b.id === batchId)
@@ -742,6 +798,7 @@ export function QuickSendPage() {
         title="Quick Send"
         subtitle="Send any Meta-approved WhatsApp template to any phone number. Paste a list or upload a CSV — variables can auto-fill per row."
         actions={
+          <>
           <button
             type="button"
             className="rx-btn accent"
@@ -768,6 +825,17 @@ export function QuickSendPage() {
               </>
             )}
           </button>
+          <button
+            type="button"
+            className="rx-btn secondary"
+            onClick={() => void sendTest()}
+            disabled={!templateId || sending || waNumbers.length === 0}
+            title="Send this template to your own connected WhatsApp number"
+            data-testid="quicksend-test"
+          >
+            <Zap size={14} /> Send test to me
+          </button>
+          </>
         }
       />
 
@@ -1157,6 +1225,7 @@ export function QuickSendPage() {
           if (expandedBatch === id) setExpandedBatch(null)
         }}
         onCancelSchedule={cancelScheduled}
+        onRetryFailed={retryFailed}
       />
     </div>
   )
@@ -1294,6 +1363,7 @@ function RecentBatches({
   onClearAll,
   onDelete,
   onCancelSchedule,
+  onRetryFailed,
 }: {
   batches: SendBatch[]
   expandedId: string | null
@@ -1301,6 +1371,7 @@ function RecentBatches({
   onClearAll: () => void
   onDelete: (id: string) => void
   onCancelSchedule: (id: string) => void
+  onRetryFailed: (id: string) => void
 }) {
   if (batches.length === 0) return null
   return (
@@ -1332,6 +1403,7 @@ function RecentBatches({
             onToggle={() => onToggle(b.id)}
             onDelete={() => onDelete(b.id)}
             onCancelSchedule={() => onCancelSchedule(b.id)}
+            onRetryFailed={() => onRetryFailed(b.id)}
           />
         ))}
       </div>
@@ -1345,12 +1417,14 @@ function BatchRow({
   onToggle,
   onDelete,
   onCancelSchedule,
+  onRetryFailed,
 }: {
   batch: SendBatch
   expanded: boolean
   onToggle: () => void
   onDelete: () => void
   onCancelSchedule: () => void
+  onRetryFailed: () => void
 }) {
   const when = new Date(batch.createdAt)
   const timeAgo = formatRelative(when)
@@ -1430,14 +1504,27 @@ function BatchRow({
               <X size={12} /> Cancel
             </button>
           ) : (
-            <button
-              type="button"
-              className="rx-btn secondary sm"
-              onClick={() => downloadResultsCsv(batch)}
-              data-testid={`batch-export-${batch.id}`}
-            >
-              <Download size={12} /> Export CSV
-            </button>
+            <>
+              {batch.failedCount > 0 && (
+                <button
+                  type="button"
+                  className="rx-btn secondary sm"
+                  onClick={onRetryFailed}
+                  data-testid={`batch-retry-${batch.id}`}
+                  title="Load failed recipients into a new draft"
+                >
+                  <RefreshCw size={12} /> Retry failed
+                </button>
+              )}
+              <button
+                type="button"
+                className="rx-btn secondary sm"
+                onClick={() => downloadResultsCsv(batch)}
+                data-testid={`batch-export-${batch.id}`}
+              >
+                <Download size={12} /> Export CSV
+              </button>
+            </>
           )}
           <button
             type="button"

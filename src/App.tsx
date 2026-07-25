@@ -1,4 +1,5 @@
 import './App.css'
+import { CommandPalette } from './components/CommandPalette'
 import { Layout } from './components/Layout'
 import { CampaignsHub } from './pages/CampaignsHub'
 import { InboxV2 } from './pages/InboxV2'
@@ -32,6 +33,7 @@ export default function App() {
       <Layout>
         <Router />
       </Layout>
+      <CommandPalette />
     </WhatsAppStoreProvider>
   )
 }

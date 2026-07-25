@@ -1951,6 +1951,156 @@ a {
   to { transform: rotate(360deg); }
 }
 
+/* =========================================================================
+   Command palette (⌘K)
+   ========================================================================= */
+.rx-cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 88px 20px 20px;
+  animation: rx-fade var(--dur) var(--ease-in-out);
+}
+
+.rx-cmdk {
+  width: min(560px, 100%);
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow-3);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  animation: rx-slide var(--dur-slow) var(--ease);
+}
+
+.rx-cmdk-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rx-cmdk-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.rx-cmdk-input::placeholder {
+  color: var(--text-3);
+}
+
+.rx-cmdk-list {
+  overflow-y: auto;
+  padding: 6px;
+  flex: 1;
+}
+
+.rx-cmdk-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  transition: background var(--dur) var(--ease);
+}
+
+.rx-cmdk-item.is-active,
+.rx-cmdk-item:hover {
+  background: var(--surface-2);
+}
+
+.rx-cmdk-icon {
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  width: 20px;
+}
+
+.rx-cmdk-item.is-active .rx-cmdk-icon {
+  color: var(--accent);
+}
+
+.rx-cmdk-label {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.rx-cmdk-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+.rx-cmdk-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13.5px;
+}
+
+.rx-cmdk-foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.rx-kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-2);
+  margin: 0 2px;
+}
+
+.rx-cmdk-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.rx-cmdk-hint-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .rx-divider {
   height: 1px;
   background: var(--border);

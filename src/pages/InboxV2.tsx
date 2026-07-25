@@ -148,14 +148,23 @@ function Thread() {
     .filter((m) => m.conversationId === conv.id)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const [draft, setDraft] = useState('')
+  const [replying, setReplying] = useState(false)
   const canReply = actions.canFreeformReply(conv.id)
   const windowOpen = conv.channel === 'email' || actions.isWithin24hWindow(conv.id)
 
   const send = () => {
-    if (!draft.trim()) return
-    if (actions.sendReply(conv.id, draft.trim())) {
-      setDraft('')
+    const text = draft.trim()
+    if (!text || replying) return
+    // Optimistic: clear input immediately
+    setDraft('')
+    setReplying(true)
+    const ok = actions.sendReply(conv.id, text)
+    if (!ok) {
+      // Restore draft if the store rejected the send
+      setDraft(text)
+      actions.toast('Reply window closed — send a template first', 'error')
     }
+    setTimeout(() => setReplying(false), 300)
   }
 
   const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'

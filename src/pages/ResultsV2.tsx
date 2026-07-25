@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
+import { Sparkline } from '../components/Sparkline'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 export function ResultsV2() {
@@ -23,6 +24,39 @@ export function ResultsV2() {
     )
   }, [state.analytics])
 
+  // Compute per-day trend buckets over the last 30 days from state.messages
+  const trends = useMemo(() => {
+    const days = 30
+    const now = Date.now()
+    const bucket = (label: string) => ({
+      label,
+      sent: new Array(days).fill(0) as number[],
+      delivered: new Array(days).fill(0) as number[],
+      read: new Array(days).fill(0) as number[],
+      replied: new Array(days).fill(0) as number[],
+    })
+    const total = bucket('total')
+    for (const m of state.messages) {
+      const ts = new Date(m.createdAt).getTime()
+      const daysAgo = Math.floor((now - ts) / (24 * 60 * 60 * 1000))
+      if (daysAgo < 0 || daysAgo >= days) continue
+      const idx = days - 1 - daysAgo
+      if (m.direction === 'outbound' && (m.status === 'sent' || m.status === 'delivered' || m.status === 'read')) {
+        total.sent[idx] += 1
+      }
+      if (m.direction === 'outbound' && (m.status === 'delivered' || m.status === 'read')) {
+        total.delivered[idx] += 1
+      }
+      if (m.direction === 'outbound' && m.status === 'read') {
+        total.read[idx] += 1
+      }
+      if (m.direction === 'inbound') {
+        total.replied[idx] += 1
+      }
+    }
+    return total
+  }, [state.messages])
+
   const engagement = totals.sent > 0 ? Math.round((totals.replies / totals.sent) * 100) : 0
   const delivery = totals.sent > 0 ? Math.round((totals.delivered / totals.sent) * 100) : 0
 
@@ -33,12 +67,18 @@ export function ResultsV2() {
         subtitle="Delivery, reads, and replies across all your outreach — by channel and by campaign."
       />
 
-      {/* Top-line metrics */}
+      {/* Top-line metrics WITH sparklines */}
       <div className="rx-metrics-grid rx-mb-6">
-        <MetricCard label="Sent" value={totals.sent} />
-        <MetricCard label="Delivered" value={totals.delivered} sub={`${delivery}%`} />
-        <MetricCard label="Read / Opened" value={totals.read} />
-        <MetricCard label="Replies" value={totals.replies} sub={`${engagement}% engagement`} accent />
+        <MetricCard label="Sent" value={totals.sent} spark={trends.sent} />
+        <MetricCard label="Delivered" value={totals.delivered} sub={`${delivery}%`} spark={trends.delivered} />
+        <MetricCard label="Read / Opened" value={totals.read} spark={trends.read} />
+        <MetricCard
+          label="Replies"
+          value={totals.replies}
+          sub={`${engagement}% engagement`}
+          accent
+          spark={trends.replied}
+        />
         <MetricCard label="Failed" value={totals.failed} muted />
       </div>
 
@@ -126,12 +166,14 @@ function MetricCard({
   sub,
   accent,
   muted,
+  spark,
 }: {
   label: string
   value: number
   sub?: string
   accent?: boolean
   muted?: boolean
+  spark?: number[]
 }) {
   return (
     <div className="rx-metric">
@@ -145,6 +187,17 @@ function MetricCard({
         {value}
       </div>
       {sub ? <div className="rx-metric-sub">{sub}</div> : null}
+      {spark && spark.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <Sparkline
+            data={spark}
+            width={140}
+            height={28}
+            color={accent ? 'var(--accent)' : 'var(--text)'}
+            fill={accent ? 'rgba(255,92,57,0.08)' : 'rgba(0,0,0,0.05)'}
+          />
+        </div>
+      )}
     </div>
   )
 }

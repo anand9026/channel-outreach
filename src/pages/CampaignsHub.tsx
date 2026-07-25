@@ -1,5 +1,5 @@
 import { Send, Sparkles, TrendingUp } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
 import { SendDrawer } from '../components/SendDrawer'
@@ -12,6 +12,13 @@ export function CampaignsHub() {
   const [sendOpen, setSendOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'active' | 'draft'>('all')
+
+  // Listen for command palette "New outreach"
+  useEffect(() => {
+    const open = () => setSendOpen(true)
+    window.addEventListener('rx-open-send-drawer', open)
+    return () => window.removeEventListener('rx-open-send-drawer', open)
+  }, [])
 
   const campaigns = useMemo(() => {
     const list = state.campaigns.filter((c) =>
