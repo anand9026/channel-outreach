@@ -1,6 +1,10 @@
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  History,
   Loader2,
   RefreshCw,
   Send,
@@ -38,7 +42,25 @@ type Recipient = {
  */
 type VarBinding = { source: 'literal'; value: string } | { source: 'column'; column: string }
 
+/** A saved historical send batch. */
+type SendBatch = {
+  id: string
+  createdAt: string
+  templateId: string
+  templateName: string
+  phoneDisplay: string
+  phoneNumberId: string
+  totalCount: number
+  sentCount: number
+  failedCount: number
+  recipients: Array<
+    Omit<Recipient, 'status'> & { status: 'sent' | 'failed'; body: string }
+  >
+}
+
 const STORAGE_KEY = 'rx-quicksend-v2'
+const BATCHES_KEY = 'rx-quicksend-batches-v1'
+const MAX_BATCHES = 20
 
 type PersistedState = {
   templateId: string
@@ -63,6 +85,69 @@ function savePersisted(s: PersistedState) {
   } catch {
     /* ignore */
   }
+}
+
+/* ---------------- Batch history storage ---------------- */
+function loadBatches(): SendBatch[] {
+  try {
+    const raw = window.localStorage.getItem(BATCHES_KEY)
+    return raw ? (JSON.parse(raw) as SendBatch[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveBatches(batches: SendBatch[]) {
+  try {
+    window.localStorage.setItem(BATCHES_KEY, JSON.stringify(batches.slice(0, MAX_BATCHES)))
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------------- CSV export ---------------- */
+function csvEscape(v: string): string {
+  if (v == null) return ''
+  const s = String(v)
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function downloadResultsCsv(
+  batch: SendBatch | { templateName: string; recipients: SendBatch['recipients']; createdAt: string },
+) {
+  // Union of all extra CSV columns across recipients
+  const extraCols = new Set<string>()
+  for (const r of batch.recipients) {
+    if (r.row) for (const k of Object.keys(r.row)) extraCols.add(k)
+  }
+  const extra = Array.from(extraCols)
+
+  const headers = ['phone', 'name', 'status', 'wamid', 'error', 'body', 'sent_at', ...extra]
+  const lines = [headers.join(',')]
+  for (const r of batch.recipients) {
+    const row = [
+      r.phone,
+      r.name ?? '',
+      r.status,
+      r.wamid ?? '',
+      r.error ?? '',
+      r.body ?? '',
+      batch.createdAt,
+      ...extra.map((c) => r.row?.[c] ?? ''),
+    ]
+    lines.push(row.map(csvEscape).join(','))
+  }
+  const csv = lines.join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `quicksend-${batch.templateName || 'batch'}-${batch.createdAt.slice(0, 19).replace(/[:.]/g, '-')}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 /** Auto-map CSV columns to template slots (fuzzy). */
@@ -153,6 +238,8 @@ export function QuickSendPage() {
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [restored, setRestored] = useState(false)
+  const [batches, setBatches] = useState<SendBatch[]>([])
+  const [expandedBatch, setExpandedBatch] = useState<string | null>(null)
 
   // -------- Restore from localStorage on mount --------
   useEffect(() => {
@@ -166,6 +253,7 @@ export function QuickSendPage() {
         (p.recipients || []).map((r) => ({ ...r, status: 'idle' as SendStatus })),
       )
     }
+    setBatches(loadBatches())
     setRestored(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -311,13 +399,14 @@ export function QuickSendPage() {
     setRecipients(initial)
 
     const successful: Array<{ to: string; body: string; name?: string; wamid?: string }> = []
+    // Per-recipient result rows for the batch snapshot
+    const batchResults: SendBatch['recipients'] = []
     let doneCount = 0
 
     for (let i = 0; i < initial.length; i++) {
       const r = initial[i]
       setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'sending' } : x)))
 
-      // Per-recipient params + preview
       const params = paramsFor(slots, bindings, r.row)
       const preview = renderBody(bodyText, bindings, r.row)
 
@@ -334,10 +423,26 @@ export function QuickSendPage() {
         const wamid = res?.messages?.[0]?.id
         setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'sent', wamid } : x)))
         successful.push({ to: r.phone, body: preview, name: r.name, wamid })
+        batchResults.push({
+          phone: r.phone,
+          name: r.name,
+          row: r.row,
+          status: 'sent',
+          wamid,
+          body: preview,
+        })
       } catch (err) {
         const msg =
           err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Send failed'
         setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'failed', error: msg } : x)))
+        batchResults.push({
+          phone: r.phone,
+          name: r.name,
+          row: r.row,
+          status: 'failed',
+          error: msg,
+          body: preview,
+        })
       }
       doneCount += 1
       setProgress({ done: doneCount, total: initial.length })
@@ -350,6 +455,24 @@ export function QuickSendPage() {
         campaignId: null,
       })
     }
+
+    // Save the batch to history
+    const newBatch: SendBatch = {
+      id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: new Date().toISOString(),
+      templateId: selectedTemplate.id,
+      templateName: selectedTemplate.name,
+      phoneDisplay: waNumbers.find((n) => n.phoneNumberId === selectedPhoneNumberId)?.phoneDisplay || '',
+      phoneNumberId: selectedPhoneNumberId,
+      totalCount: initial.length,
+      sentCount: successful.length,
+      failedCount: initial.length - successful.length,
+      recipients: batchResults,
+    }
+    const updated = [newBatch, ...batches].slice(0, MAX_BATCHES)
+    setBatches(updated)
+    saveBatches(updated)
+    setExpandedBatch(newBatch.id)
 
     setSending(false)
     const failed = initial.length - successful.length
@@ -514,17 +637,47 @@ export function QuickSendPage() {
                 <span>
                   {recipients.length} recipient{recipients.length === 1 ? '' : 's'}
                 </span>
-                {totalSent + totalFailed > 0 && (
-                  <span className="rx-caption">
-                    <span style={{ color: 'var(--success)' }}>{totalSent} sent</span>
-                    {totalFailed ? (
-                      <>
-                        {' · '}
-                        <span style={{ color: 'var(--danger)' }}>{totalFailed} failed</span>
-                      </>
-                    ) : null}
-                  </span>
-                )}
+                <span className="rx-row" style={{ gap: 8 }}>
+                  {totalSent + totalFailed > 0 && (
+                    <span className="rx-caption">
+                      <span style={{ color: 'var(--success)' }}>{totalSent} sent</span>
+                      {totalFailed ? (
+                        <>
+                          {' · '}
+                          <span style={{ color: 'var(--danger)' }}>{totalFailed} failed</span>
+                        </>
+                      ) : null}
+                    </span>
+                  )}
+                  {totalSent + totalFailed > 0 && (
+                    <button
+                      type="button"
+                      className="rx-btn ghost sm"
+                      onClick={() => {
+                        // Build a synthetic batch from the current in-page recipients
+                        const results = recipients
+                          .filter((r) => r.status === 'sent' || r.status === 'failed')
+                          .map((r) => ({
+                            phone: r.phone,
+                            name: r.name,
+                            row: r.row,
+                            status: r.status as 'sent' | 'failed',
+                            wamid: r.wamid,
+                            error: r.error,
+                            body: renderBody(bodyText, bindings, r.row),
+                          }))
+                        downloadResultsCsv({
+                          templateName: selectedTemplate?.name || 'quicksend',
+                          createdAt: new Date().toISOString(),
+                          recipients: results,
+                        })
+                      }}
+                      data-testid="quicksend-export-current"
+                    >
+                      <Download size={12} /> Export CSV
+                    </button>
+                  )}
+                </span>
               </div>
               <div
                 className="rx-col"
@@ -627,6 +780,24 @@ export function QuickSendPage() {
           )}
         </div>
       </div>
+
+      {/* -------- Recent batches -------- */}
+      <RecentBatches
+        batches={batches}
+        expandedId={expandedBatch}
+        onToggle={(id) => setExpandedBatch(expandedBatch === id ? null : id)}
+        onClearAll={() => {
+          setBatches([])
+          saveBatches([])
+          setExpandedBatch(null)
+        }}
+        onDelete={(id) => {
+          const next = batches.filter((b) => b.id !== id)
+          setBatches(next)
+          saveBatches(next)
+          if (expandedBatch === id) setExpandedBatch(null)
+        }}
+      />
     </div>
   )
 }
@@ -765,4 +936,177 @@ function StatusIcon({ status }: { status: SendStatus }) {
       }}
     />
   )
+}
+
+/* -------------------- Recent batches panel -------------------- */
+function RecentBatches({
+  batches,
+  expandedId,
+  onToggle,
+  onClearAll,
+  onDelete,
+}: {
+  batches: SendBatch[]
+  expandedId: string | null
+  onToggle: (id: string) => void
+  onClearAll: () => void
+  onDelete: (id: string) => void
+}) {
+  if (batches.length === 0) return null
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div className="rx-row rx-mb-4" style={{ justifyContent: 'space-between' }}>
+        <div className="rx-row">
+          <History size={16} style={{ color: 'var(--text-3)' }} />
+          <h2 style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.015em', margin: 0 }}>
+            Recent send batches
+          </h2>
+          <span className="rx-text-2 rx-text-sm">· last {batches.length}</span>
+        </div>
+        <button
+          type="button"
+          className="rx-btn ghost sm"
+          onClick={onClearAll}
+          data-testid="quicksend-clear-batches"
+        >
+          <Trash2 size={12} /> Clear history
+        </button>
+      </div>
+
+      <div className="rx-col rx-gap">
+        {batches.map((b) => (
+          <BatchRow
+            key={b.id}
+            batch={b}
+            expanded={expandedId === b.id}
+            onToggle={() => onToggle(b.id)}
+            onDelete={() => onDelete(b.id)}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function BatchRow({
+  batch,
+  expanded,
+  onToggle,
+  onDelete,
+}: {
+  batch: SendBatch
+  expanded: boolean
+  onToggle: () => void
+  onDelete: () => void
+}) {
+  const when = new Date(batch.createdAt)
+  const timeAgo = formatRelative(when)
+  return (
+    <div className="rx-card compact" style={{ padding: 0 }} data-testid={`batch-${batch.id}`}>
+      <div
+        className="rx-row"
+        style={{
+          padding: '14px 18px',
+          justifyContent: 'space-between',
+          gap: 16,
+          cursor: 'pointer',
+        }}
+        onClick={onToggle}
+      >
+        <div className="rx-row" style={{ gap: 12, minWidth: 0, flex: 1 }}>
+          <button
+            type="button"
+            className="rx-icon-btn"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggle()
+            }}
+          >
+            {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="rx-row" style={{ gap: 8 }}>
+              <strong style={{ fontSize: 14 }}>{batch.templateName}</strong>
+              <span className="rx-badge">{batch.totalCount} sent</span>
+              {batch.failedCount > 0 && (
+                <span className="rx-badge danger">{batch.failedCount} failed</span>
+              )}
+              {batch.sentCount > 0 && batch.failedCount === 0 && (
+                <span className="rx-badge success">All delivered</span>
+              )}
+            </div>
+            <div className="rx-text-xs rx-muted" style={{ marginTop: 3 }}>
+              {timeAgo} · from <span className="mono">{batch.phoneDisplay}</span>
+            </div>
+          </div>
+        </div>
+        <div className="rx-row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="rx-btn secondary sm"
+            onClick={() => downloadResultsCsv(batch)}
+            data-testid={`batch-export-${batch.id}`}
+          >
+            <Download size={12} /> Export CSV
+          </button>
+          <button
+            type="button"
+            className="rx-icon-btn"
+            aria-label="Delete batch"
+            onClick={onDelete}
+            data-testid={`batch-delete-${batch.id}`}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: 16 }}>
+          <table className="rx-table">
+            <thead>
+              <tr>
+                <th>Phone</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Message ID</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batch.recipients.map((r, i) => (
+                <tr key={`${r.phone}-${i}`}>
+                  <td className="mono rx-text-sm">+{r.phone}</td>
+                  <td>{r.name || <span className="rx-muted">—</span>}</td>
+                  <td>
+                    <span className={`rx-badge ${r.status === 'sent' ? 'success' : 'danger'}`}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td className="mono rx-text-xs">
+                    {r.wamid ? r.wamid.slice(0, 24) + '…' : <span className="rx-muted">—</span>}
+                  </td>
+                  <td className="rx-text-xs" style={{ color: r.error ? 'var(--danger)' : undefined }}>
+                    {r.error || <span className="rx-muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatRelative(d: Date): string {
+  const diff = Date.now() - d.getTime()
+  const m = Math.round(diff / 60_000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h}h ago`
+  const days = Math.round(h / 24)
+  if (days < 7) return `${days}d ago`
+  return d.toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }

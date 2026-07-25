@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only test focused on new Quick Send batch history + CSV export features. Seeded 2 SendBatch objects (1 mixed, 1 all-delivered) into localStorage['rx-quicksend-batches-v1'], reloaded, navigated to Quick Send. Verified: Recent send batches section (title '· last 2'), quicksend-clear-batches button, per-batch rows with correct pills (sent/failed/All delivered), expand/collapse showing 5-column table (Phone/Name/Status/Message ID/Error), failed-row error rendering in red, batch-export-<id> triggers CSV download containing phone,name,status,wamid,error,body,sent_at + extra per-row columns (first_name, brand) with correct data, batch-delete-<id> removes only that batch and updates localStorage, quicksend-clear-batches clears all and empties localStorage, batches persist across reload. Zero JS/page console errors. Did not test quicksend-export-current or actual send flow (would hit live Meta API).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BatchRow header pill", "issue": "Sent-count pill renders `{batch.totalCount} sent` — for a batch of 2 sent + 1 failed it displays '3 sent · 1 failed' which is misleading. Spec says 'sent count pill'; should use batch.sentCount (e.g. '2 sent') or relabel as 'N total'.", "selector": "QuickSendPage.tsx line 1031 <span className=\"rx-badge\">{batch.totalCount} sent</span>", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix sent-count pill in RecentBatches BatchRow: replace {batch.totalCount} sent with {batch.sentCount} sent (or change label to '{totalCount} total')."
+  ],
+  "critical_code_review_comments": [
+    "QuickSendPage.tsx is now 1113 lines — approaching the 700-line guideline. Consider extracting RecentBatches / BatchRow / csv helpers into a separate module (e.g. src/pages/quicksend/RecentBatches.tsx, src/pages/quicksend/csv.ts).",
+    "downloadResultsCsv unions extraCols from Object.keys(r.row) but iteration order across recipients is not stable if rows have differing key orders; harmless but worth documenting.",
+    "The unused helper `_unused_maybePreserveLiterals` (lines 806–815) should be deleted rather than shipped.",
+    "Batch id 'batch_<timestamp>_<rand>' is embedded in data-testid attributes — fine for E2E, but including timestamp in the DOM attribute means selectors are dynamic; that's why we seeded fixed ids for testing.",
+    "formatRelative falls back to toLocaleDateString once >7 days old — seeded ISO dates (Jan 25) rendered as 'Jan 25, 09:00 AM' because system 'now' is later; expected behavior."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100% functional (1 medium labeling bug)"},
+  "test_credentials": "none required",
+  "seed_data_creation": "Seeded localStorage['rx-quicksend-batches-v1'] with 2 SendBatch objects (batch_1 mixed sent+failed, batch_2 all delivered) via page.evaluate. Also used 'Explore with demo data' path to seed a connected WA number.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The new batch history / export features work end-to-end. The only follow-up is the sent-count pill label bug. quicksend-export-current button was not tested (requires a completed send). To test again, seed batches with fixed ids as done here and use page.expect_download to capture blob CSV."
+}
