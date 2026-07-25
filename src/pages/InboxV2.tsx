@@ -1,12 +1,42 @@
-import { Check, CheckCheck, MessageCircle, Search, Send } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  Check,
+  CheckCheck,
+  MessageCircle,
+  RefreshCcw,
+  Search,
+  Send,
+  Wifi,
+  WifiOff,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
+
+function formatSince(ts: string | null): string {
+  if (!ts) return 'never'
+  const diff = Math.max(0, Date.now() - new Date(ts).getTime())
+  const s = Math.floor(diff / 1000)
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  return `${h}h ago`
+}
 
 export function InboxV2() {
   const { state, actions } = useWhatsAppStore()
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState<'all' | 'whatsapp' | 'email'>('all')
+  const [syncing, setSyncing] = useState(false)
+
+  // Force re-render every 20s so the "last synced Xs ago" label ticks
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 20000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const conversations = useMemo(() => {
     return state.conversations
@@ -17,6 +47,7 @@ export function InboxV2() {
         return (
           inf?.name.toLowerCase().includes(search.toLowerCase()) ||
           inf?.handle.toLowerCase().includes(search.toLowerCase()) ||
+          inf?.phone.toLowerCase().includes(search.toLowerCase()) ||
           c.lastPreview?.toLowerCase().includes(search.toLowerCase())
         )
       })
@@ -31,13 +62,82 @@ export function InboxV2() {
     }
   }, [conversations, selected, actions])
 
+  const { polling, lastSyncedAt, lastError, connection } = state.liveInbox
+  const liveThreadCount = state.conversations.filter((c) => c.isLive).length
+
+  const onSyncNow = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      await actions.syncLiveInboxNow()
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <>
       <div style={{ padding: '32px 40px 20px' }}>
-        <h1 className="rx-page-title">Inbox</h1>
-        <p className="rx-page-sub">
-          Every reply from every channel, unified per creator. Campaign context stays with the chat.
-        </p>
+        <div className="rx-row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+          <div>
+            <h1 className="rx-page-title">Inbox</h1>
+            <p className="rx-page-sub">
+              Every reply from every channel, unified per creator. Campaign context stays with the chat.
+            </p>
+          </div>
+          <div
+            className="rx-live-bar"
+            data-testid="live-inbox-bar"
+            role="status"
+            aria-live="polite"
+          >
+            <span
+              className={`rx-live-dot${polling && !lastError ? ' is-on' : lastError ? ' is-err' : ''}`}
+              aria-hidden
+            />
+            <div className="rx-live-meta">
+              <div className="rx-live-title">
+                {polling ? (lastError ? 'Live · retrying' : 'Live') : 'Paused'}
+                {liveThreadCount > 0 ? (
+                  <span className="rx-live-count mono">· {liveThreadCount}</span>
+                ) : null}
+              </div>
+              <div className="rx-live-sub mono">
+                {lastError ? (
+                  <span className="rx-live-err" title={lastError}>
+                    <AlertTriangle size={11} /> {lastError.slice(0, 40)}
+                  </span>
+                ) : (
+                  <>synced {formatSince(lastSyncedAt)}</>
+                )}
+                {connection?.phone_number_id ? (
+                  <span className="rx-live-pnid" title={connection.phone_number_id}>
+                    · pnid {connection.phone_number_id.slice(-6)}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={onSyncNow}
+              disabled={syncing}
+              title="Sync now"
+              data-testid="sync-inbox-now"
+            >
+              <RefreshCcw size={13} className={syncing ? 'rx-spin' : ''} />
+            </button>
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={() => actions.setLivePolling(!polling)}
+              title={polling ? 'Pause live polling' : 'Resume live polling'}
+              data-testid="toggle-live-polling"
+            >
+              {polling ? <Wifi size={13} /> : <WifiOff size={13} />}
+            </button>
+          </div>
+        </div>
       </div>
       <div className="rx-inbox">
         <div className="rx-inbox-list">
@@ -46,7 +146,7 @@ export function InboxV2() {
               <Search size={14} className="rx-search-icon" />
               <input
                 className="rx-input"
-                placeholder="Search creators or messages…"
+                placeholder="Search creators, phone, or messages…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -90,6 +190,7 @@ export function InboxV2() {
                   type="button"
                   className={`rx-conv${state.selectedConversationId === c.id ? ' is-selected' : ''}`}
                   onClick={() => actions.selectConversation(c.id)}
+                  data-testid={`conv-${c.id}`}
                 >
                   <div className="rx-conv-avatar">
                     {initials}
@@ -99,7 +200,14 @@ export function InboxV2() {
                   </div>
                   <div className="rx-conv-body">
                     <div className="rx-conv-row">
-                      <div className="rx-conv-name">{inf?.name || 'Unknown'}</div>
+                      <div className="rx-conv-name">
+                        {inf?.name || 'Unknown'}
+                        {c.isLive ? (
+                          <span className="rx-live-tag mono" title="Live from WhatsApp Cloud API">
+                            LIVE
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="rx-conv-time">
                         {new Date(c.lastMessageAt).toLocaleDateString('en', {
                           month: 'short',
@@ -152,19 +260,35 @@ function Thread() {
   const canReply = actions.canFreeformReply(conv.id)
   const windowOpen = conv.channel === 'email' || actions.isWithin24hWindow(conv.id)
 
-  const send = () => {
+  // Auto-scroll to newest on message change / selection change
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [conv.id, messages.length])
+
+  const send = async () => {
     const text = draft.trim()
     if (!text || replying) return
-    // Optimistic: clear input immediately
     setDraft('')
     setReplying(true)
-    const ok = actions.sendReply(conv.id, text)
-    if (!ok) {
-      // Restore draft if the store rejected the send
-      setDraft(text)
-      actions.toast('Reply window closed — send a template first', 'error')
+    try {
+      if (conv.channel === 'whatsapp' && conv.isLive) {
+        const ok = await actions.sendWhatsAppReplyLive(conv.id, text)
+        if (!ok) {
+          setDraft(text)
+        }
+      } else {
+        const ok = actions.sendReply(conv.id, text)
+        if (!ok) {
+          setDraft(text)
+          actions.toast('Reply window closed — send a template first', 'error')
+        }
+      }
+    } finally {
+      setReplying(false)
     }
-    setTimeout(() => setReplying(false), 300)
   }
 
   const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
@@ -182,6 +306,11 @@ function Thread() {
           <div>
             <div style={{ fontWeight: 600, fontSize: 14.5, letterSpacing: '-0.01em' }}>
               {inf?.name}
+              {conv.isLive ? (
+                <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>
+                  LIVE
+                </span>
+              ) : null}
             </div>
             <div className="rx-text-xs rx-muted mono">
               {conv.channel === 'whatsapp' ? inf?.phone : inf?.email}
@@ -217,9 +346,11 @@ function Thread() {
         </div>
       </div>
 
-      <div className="rx-thread-body">
+      <div className="rx-thread-body" ref={bodyRef}>
         {messages.length === 0 ? (
-          <div style={{ margin: 'auto', color: 'var(--text-3)' }}>No messages yet.</div>
+          <div style={{ margin: 'auto', color: 'var(--text-3)' }}>
+            {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
+          </div>
         ) : (
           messages.map((m) => (
             <div key={m.id} className={`rx-msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}>
@@ -241,7 +372,13 @@ function Thread() {
                     <>
                       <span>·</span>
                       <span>{m.status}</span>
-                      {m.status === 'read' ? <CheckCheck size={12} /> : m.status === 'delivered' ? <Check size={12} /> : null}
+                      {m.status === 'read' ? (
+                        <CheckCheck size={12} />
+                      ) : m.status === 'delivered' ? (
+                        <Check size={12} />
+                      ) : m.status === 'failed' ? (
+                        <AlertTriangle size={12} />
+                      ) : null}
                     </>
                   ) : null}
                 </div>
@@ -254,7 +391,13 @@ function Thread() {
       <div className="rx-composer">
         {conv.channel === 'whatsapp' && (
           <div className={`rx-window-note ${windowOpen ? 'open' : 'closed'}`}>
-            <span>{windowOpen ? '● 24-hour reply window open' : '● Window closed — use a template'}</span>
+            <span>
+              {windowOpen
+                ? conv.isLive
+                  ? '● 24-hour reply window open · sending via WhatsApp Cloud API'
+                  : '● 24-hour reply window open'
+                : '● Window closed — use a template'}
+            </span>
           </div>
         )}
         <div className="rx-composer-row">
@@ -264,7 +407,7 @@ function Thread() {
             rows={1}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            disabled={!canReply}
+            disabled={!canReply || replying}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -276,21 +419,28 @@ function Thread() {
             type="button"
             className="rx-btn primary"
             onClick={send}
-            disabled={!canReply || !draft.trim()}
+            disabled={!canReply || !draft.trim() || replying}
             data-testid="composer-send"
           >
-            <Send size={14} /> Send
+            <Send size={14} /> {replying ? 'Sending…' : 'Send'}
           </button>
         </div>
-        <div className="rx-row" style={{ gap: 6, marginTop: 4 }}>
-          <button
-            type="button"
-            className="rx-btn ghost sm"
-            onClick={() => actions.simulateInbound(conv.id, 'Yes, sounds great! Would love to know more.')}
-          >
-            Simulate creator reply
-          </button>
-        </div>
+        {!conv.isLive ? (
+          <div className="rx-row" style={{ gap: 6, marginTop: 4 }}>
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={() =>
+                actions.simulateInbound(
+                  conv.id,
+                  'Yes, sounds great! Would love to know more.',
+                )
+              }
+            >
+              Simulate creator reply
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

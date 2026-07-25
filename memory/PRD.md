@@ -25,10 +25,19 @@ Command palette (⌘K) provides fast navigation & primary actions from anywhere.
 
 ### Inbox
 - **Unified inbox** (WhatsApp + Email) with per-creator threads
+- **Live WhatsApp Cloud API polling** — 15s poll of `/whatsapp-outreach/inbox` merges threads + messages into local state without breaking mock data
+- **Live indicator** in Inbox header (pulsing dot, last-synced label, error surface, sync-now + pause/resume)
+- **LIVE badge** on threads sourced from the WhatsApp Cloud API
+- **Real WhatsApp send** — replying in a LIVE thread hits `/whatsapp-outreach/messages/text`; failure marks message failed + toasts
 - **Optimistic reply** — input clears instantly; error only if store rejects (24h window closed)
 - **24h WhatsApp reply window** indicator with warning state
 - **Campaign context** shown on threads (multi-campaign safe)
-- **Simulate inbound** for demo testing
+- **Simulate inbound** for demo testing (only on non-live threads)
+- **Auto-scroll to newest** on message/thread change
+
+### Templates & connection
+- **Real Meta template listing** in Messages page (`listWhatsAppTemplates`) with META source badge and Refresh button
+- **Auto-detect WhatsApp connection** on mount (`getWhatsAppConnection`) — injects the real `phone_number_id` as a synthetic WhatsAppNumber so onboarding auto-dismisses and Quick Send picks up the live sender
 
 ### Discoverability & polish
 - **Command palette (⌘K / Ctrl+K)** — navigate to any page, run "New outreach", jump to any campaign or conversation via search
@@ -64,8 +73,13 @@ Command palette (⌘K) provides fast navigation & primary actions from anywhere.
 Use **Save to GitHub** in the chat input when ready.
 
 ## Backlog (still non-blocking)
-- Wire real WhatsApp Cloud API messages into `InboxV2` thread body (currently in-memory demo except for QuickSend sends which do land there via `logWhatsAppSends`)
-- Dark mode
+- Canned replies + thread labels in the Inbox
+- Bulk inbox actions (Resolve all / Assign)
+- Dark mode toggle
 - Extract `RecentBatches` + `BatchRow` into submodules (QuickSendPage.tsx approaching 1600 LOC)
+- WhatsAppStore.tsx (~1900 LOC) — extract live-inbox slice
 - Error boundary + skeleton loaders
 - Onboarding interactive tour
+
+## Changelog
+- **2026-07-25** — Wired real WhatsApp Cloud API into Inbox: 15s polling loop + optimistic merge + real reply sends; auto-detects connection; Meta templates surface in Messages page. Updated files: `src/store/WhatsAppStore.tsx`, `src/pages/InboxV2.tsx`, `src/pages/TemplatesLib.tsx`, `src/types.ts`, `src/index.css`.

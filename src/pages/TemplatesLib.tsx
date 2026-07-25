@@ -1,27 +1,104 @@
-import { Plus, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, Plus, RefreshCcw, Search } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { CreateTemplateModal } from '../components/CreateTemplateModal'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
+import { listWhatsAppTemplates, type MetaTemplate } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
+
+type Row = {
+  key: string
+  source: 'local' | 'meta'
+  name: string
+  channel: 'whatsapp' | 'email'
+  category: string
+  body: string
+  variables: string[]
+  status: string
+  updatedAt: string
+}
+
+function extractMetaBody(t: MetaTemplate): { body: string; variables: string[] } {
+  const bodyComp = (t.components || []).find(
+    (c) => (c.type || '').toUpperCase() === 'BODY',
+  )
+  const body = bodyComp?.text || ''
+  const slots = [...body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])
+  return { body, variables: [...new Set(slots)] }
+}
 
 export function TemplatesLib() {
   const { state } = useWhatsAppStore()
   const [tab, setTab] = useState<'all' | 'whatsapp' | 'email'>('all')
   const [search, setSearch] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
+  const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
+  const [metaLoading, setMetaLoading] = useState(false)
+  const [metaError, setMetaError] = useState<string | null>(null)
 
-  const templates = useMemo(() => {
-    return state.templates
-      .filter((t) => (tab === 'all' ? true : t.channel === tab))
-      .filter((t) =>
+  const loadMeta = async () => {
+    setMetaLoading(true)
+    setMetaError(null)
+    try {
+      const res = await listWhatsAppTemplates({ limit: 100 })
+      setMetaTemplates(res)
+    } catch (e) {
+      setMetaError((e as Error).message || 'Could not load Meta templates')
+    } finally {
+      setMetaLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadMeta()
+  }, [])
+
+  const rows = useMemo<Row[]>(() => {
+    const localRows: Row[] = state.templates.map((t) => ({
+      key: `local:${t.id}`,
+      source: 'local',
+      name: t.name,
+      channel: t.channel,
+      category: t.category,
+      body: t.body,
+      variables: t.variables,
+      status: t.status,
+      updatedAt: t.updatedAt,
+    }))
+
+    const localNames = new Set(
+      state.templates
+        .filter((t) => t.channel === 'whatsapp')
+        .map((t) => t.name.toLowerCase()),
+    )
+    const metaRows: Row[] = metaTemplates
+      // De-dupe against local WhatsApp templates with the same name
+      .filter((t) => !localNames.has((t.name || '').toLowerCase()))
+      .map((t) => {
+        const { body, variables } = extractMetaBody(t)
+        return {
+          key: `meta:${t.id}`,
+          source: 'meta',
+          name: t.name,
+          channel: 'whatsapp',
+          category: t.category,
+          body,
+          variables,
+          status: t.status,
+          updatedAt: '',
+        }
+      })
+
+    return [...localRows, ...metaRows]
+      .filter((r) => (tab === 'all' ? true : r.channel === tab))
+      .filter((r) =>
         !search
           ? true
-          : t.name.toLowerCase().includes(search.toLowerCase()) ||
-            t.body.toLowerCase().includes(search.toLowerCase()),
+          : r.name.toLowerCase().includes(search.toLowerCase()) ||
+            r.body.toLowerCase().includes(search.toLowerCase()),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [state.templates, tab, search])
+  }, [state.templates, metaTemplates, tab, search])
 
   return (
     <div className="rx-page">
@@ -29,16 +106,51 @@ export function TemplatesLib() {
         title="Messages"
         subtitle="Your library of WhatsApp templates and email scripts. Reusable, personalizable, approvable."
         actions={
-          <button
-            type="button"
-            className="rx-btn primary"
-            onClick={() => setCreateOpen(true)}
-            data-testid="new-template"
-          >
-            <Plus size={14} /> New template
-          </button>
+          <>
+            <button
+              type="button"
+              className="rx-btn secondary"
+              onClick={loadMeta}
+              disabled={metaLoading}
+              title="Refresh Meta templates"
+              data-testid="refresh-meta-templates"
+            >
+              <RefreshCcw size={13} className={metaLoading ? 'rx-spin' : ''} />
+              Refresh Meta
+            </button>
+            <button
+              type="button"
+              className="rx-btn primary"
+              onClick={() => setCreateOpen(true)}
+              data-testid="new-template"
+            >
+              <Plus size={14} /> New template
+            </button>
+          </>
         }
       />
+
+      {metaError ? (
+        <div
+          className="rx-card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: 12,
+            marginBottom: 16,
+            borderColor: 'var(--warning, #f59e0b)',
+            background: 'var(--warning-soft, #fef3c7)',
+            color: 'var(--warning, #92400e)',
+          }}
+          data-testid="meta-templates-error"
+        >
+          <AlertTriangle size={14} />
+          <span className="rx-text-sm">
+            Meta template sync failed: {metaError}. Local templates still work.
+          </span>
+        </div>
+      ) : null}
 
       <div className="rx-row rx-mb-4" style={{ justifyContent: 'space-between', gap: 12 }}>
         <div className="rx-search" style={{ flex: 1, maxWidth: 360 }}>
@@ -72,7 +184,7 @@ export function TemplatesLib() {
         </div>
       </div>
 
-      {templates.length === 0 ? (
+      {rows.length === 0 ? (
         <EmptyState
           title="No templates yet"
           body="Create your first template. WhatsApp templates need Meta approval; email scripts are ready instantly."
@@ -92,16 +204,16 @@ export function TemplatesLib() {
                 <th>Category</th>
                 <th>Variables</th>
                 <th>Status</th>
-                <th>Updated</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody>
-              {templates.map((t) => (
-                <tr key={t.id}>
+              {rows.map((t) => (
+                <tr key={t.key} data-testid={`template-row-${t.source}-${t.name}`}>
                   <td>
                     <div style={{ fontWeight: 600, fontSize: 13.5 }}>{t.name}</div>
                     <div className="rx-text-xs rx-muted" style={{ marginTop: 2 }}>
-                      {t.body.slice(0, 80)}…
+                      {t.body ? t.body.slice(0, 80) + (t.body.length > 80 ? '…' : '') : '—'}
                     </div>
                   </td>
                   <td>
@@ -121,12 +233,11 @@ export function TemplatesLib() {
                     <span className={`rx-badge ${statusClass(t.status)}`}>{t.status}</span>
                   </td>
                   <td>
-                    <span className="rx-text-xs rx-muted">
-                      {new Date(t.updatedAt).toLocaleDateString('en', {
-                        month: 'short',
-                        day: 'numeric',
-                      })}
-                    </span>
+                    {t.source === 'meta' ? (
+                      <span className="rx-live-tag mono">META</span>
+                    ) : (
+                      <span className="rx-text-xs rx-muted">local</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -141,7 +252,7 @@ export function TemplatesLib() {
 }
 
 function statusClass(s: string) {
-  switch (s) {
+  switch (s?.toUpperCase()) {
     case 'APPROVED':
     case 'ACTIVE':
       return 'success'

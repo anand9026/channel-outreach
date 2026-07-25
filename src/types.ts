@@ -216,6 +216,8 @@ export interface Conversation {
   lastMessageAt: string
   unreadCount: number
   lastPreview?: string
+  /** True when this thread is sourced from the live WhatsApp Cloud API */
+  isLive?: boolean
 }
 
 export interface TeamMember {

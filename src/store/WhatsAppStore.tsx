@@ -29,6 +29,16 @@ import {
 } from '../data/seed'
 import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
 import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
+import {
+  ApiError,
+  getWhatsAppConnection,
+  getWhatsAppInboxMessages,
+  listWhatsAppInbox,
+  sendWhatsAppText,
+  type ConnectionInfo,
+  type InboxMessage as ApiInboxMessage,
+  type InboxThread as ApiInboxThread,
+} from '../lib/api'
 import type {
   AudienceSource,
   Brand,
@@ -83,6 +93,16 @@ export interface AppState {
   connectStep: number
   connectKind: OutreachChannel
   emailModalOpen: boolean
+  liveInbox: {
+    /** Whether the 15s polling loop is active */
+    polling: boolean
+    /** ISO of last successful (or attempted-with-error) sync */
+    lastSyncedAt: string | null
+    /** Last error message from the WhatsApp proxy, if any */
+    lastError: string | null
+    /** Cached connection info from GET /whatsapp-outreach/connection */
+    connection: ConnectionInfo | null
+  }
 }
 
 type Action =
@@ -161,7 +181,7 @@ type Action =
   | { type: 'RELEASE_SCHEDULED'; messageId: string }
   | { type: 'ADVANCE_MESSAGE_STATUS'; messageId: string; status: DeliveryStatus }
   | { type: 'SIMULATE_INBOUND'; conversationId: string; body: string }
-  | { type: 'SEND_REPLY'; conversationId: string; body: string }
+  | { type: 'SEND_REPLY'; conversationId: string; body: string; msgId?: string }
   | { type: 'ASSIGN_CONVERSATION'; conversationId: string; memberId: string | undefined }
   | { type: 'RESOLVE_CONVERSATION'; conversationId: string }
   | { type: 'REOPEN_CONVERSATION'; conversationId: string }
@@ -186,6 +206,14 @@ type Action =
         phoneNumberId?: string
         campaignId?: string | null
       }
+    }
+  | { type: 'SET_LIVE_POLLING'; polling: boolean }
+  | { type: 'SET_LIVE_SYNCED'; ts: string; error?: string | null }
+  | { type: 'SET_LIVE_CONNECTION'; connection: ConnectionInfo | null }
+  | { type: 'MERGE_INBOX_THREADS'; threads: ApiInboxThread[] }
+  | {
+      type: 'MERGE_INBOX_MESSAGES'
+      payload: { phone: string; messages: ApiInboxMessage[]; phoneNumberId?: string }
     }
 
 const initialState: AppState = {
@@ -212,6 +240,12 @@ const initialState: AppState = {
   connectStep: 0,
   connectKind: 'whatsapp',
   emailModalOpen: false,
+  liveInbox: {
+    polling: true,
+    lastSyncedAt: null,
+    lastError: null,
+    connection: null,
+  },
 }
 
 function uid(prefix: string): string {
@@ -220,6 +254,32 @@ function uid(prefix: string): string {
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+function normPhone(s: string): string {
+  return (s || '').replace(/\D/g, '')
+}
+
+function findInfluencerByPhone(
+  influencers: Influencer[],
+  phoneDigits: string,
+): Influencer | undefined {
+  if (!phoneDigits) return undefined
+  return influencers.find(
+    (i) => normPhone(i.phone) === phoneDigits || i.id === `ext_${phoneDigits}`,
+  )
+}
+
+function mapLiveStatus(
+  raw: string | undefined,
+  direction: 'inbound' | 'outbound',
+): DeliveryStatus {
+  const v = (raw || '').toLowerCase()
+  if (v === 'sent') return 'sent'
+  if (v === 'delivered' || v === 'received') return 'delivered'
+  if (v === 'read') return 'read'
+  if (v === 'failed' || v === 'undelivered') return 'failed'
+  return direction === 'inbound' ? 'delivered' : 'sent'
 }
 
 export function connectionMode(state: Pick<AppState, 'whatsAppNumbers' | 'emailAccounts'>): ConnectionMode {
@@ -1002,7 +1062,7 @@ function reducer(state: AppState, action: Action): AppState {
       }
       const ts = nowIso()
       const msg: Message = {
-        id: uid('msg'),
+        id: action.msgId ?? uid('msg'),
         conversationId: conv.id,
         organizationId: ORG_ID,
         channel: conv.channel,
@@ -1191,6 +1251,210 @@ function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, collections: [collection, ...state.collections] }
     }
+    case 'SET_LIVE_POLLING':
+      return {
+        ...state,
+        liveInbox: { ...state.liveInbox, polling: action.polling },
+      }
+    case 'SET_LIVE_SYNCED':
+      return {
+        ...state,
+        liveInbox: {
+          ...state.liveInbox,
+          lastSyncedAt: action.ts,
+          lastError: action.error ?? null,
+        },
+      }
+    case 'SET_LIVE_CONNECTION': {
+      const conn = action.connection
+      let whatsAppNumbers = state.whatsAppNumbers
+      if (conn?.phone_number_id) {
+        const exists = whatsAppNumbers.some(
+          (n) => n.phoneNumberId === conn.phone_number_id,
+        )
+        if (!exists) {
+          whatsAppNumbers = [
+            ...whatsAppNumbers,
+            {
+              id: uid('wa'),
+              organizationId: ORG_ID,
+              displayName: 'Reelax Live WhatsApp',
+              phoneDisplay: '',
+              phoneNumberId: conn.phone_number_id,
+              wabaId: conn.waba_id ?? '',
+              businessId: '',
+              qualityRating: 'GREEN',
+              messagingTier: 'TIER_10K',
+              connectedAt: nowIso(),
+            },
+          ]
+        }
+      }
+      return {
+        ...state,
+        whatsAppNumbers,
+        liveInbox: { ...state.liveInbox, connection: conn },
+      }
+    }
+    case 'MERGE_INBOX_THREADS': {
+      const threads = action.threads || []
+      if (threads.length === 0) return state
+      const defaultPnid = state.liveInbox.connection?.phone_number_id ?? undefined
+      let influencers = [...state.influencers]
+      let conversations = [...state.conversations]
+
+      for (const t of threads) {
+        const phone = normPhone(t.phone)
+        if (!phone) continue
+        let inf = findInfluencerByPhone(influencers, phone)
+        if (!inf) {
+          inf = {
+            id: `ext_${phone}`,
+            name: (t.display_name && t.display_name.trim()) || phone,
+            handle: '',
+            phone,
+            email: '',
+            followers: '—',
+            niche: 'External',
+          }
+          influencers = [...influencers, inf]
+        }
+        const phoneNumberId = t.phone_number_id || defaultPnid || 'wa_live'
+        const convId = conversationKey(ORG_ID, 'whatsapp', phoneNumberId, inf.id)
+        const existing = conversations.find((c) => c.id === convId)
+        if (!existing) {
+          conversations = [
+            ...conversations,
+            {
+              id: convId,
+              organizationId: ORG_ID,
+              channel: 'whatsapp',
+              phoneNumberId,
+              influencerId: inf.id,
+              campaignIds: [],
+              status: 'open',
+              lastMessageAt: t.last_message_at,
+              unreadCount: t.unread_count || 0,
+              lastPreview: (t.last_preview || '').slice(0, 80),
+              lastInboundAt: t.last_inbound_at ?? undefined,
+              isLive: true,
+            },
+          ]
+        } else {
+          conversations = conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  lastMessageAt:
+                    t.last_message_at > c.lastMessageAt
+                      ? t.last_message_at
+                      : c.lastMessageAt,
+                  lastPreview: t.last_preview
+                    ? t.last_preview.slice(0, 80)
+                    : c.lastPreview,
+                  lastInboundAt: t.last_inbound_at ?? c.lastInboundAt,
+                  unreadCount:
+                    state.selectedConversationId === c.id
+                      ? 0
+                      : Math.max(c.unreadCount, t.unread_count || 0),
+                  isLive: true,
+                }
+              : c,
+          )
+        }
+      }
+      return { ...state, influencers, conversations }
+    }
+    case 'MERGE_INBOX_MESSAGES': {
+      const { phone, messages: apiMsgs, phoneNumberId: hint } = action.payload
+      if (!apiMsgs || apiMsgs.length === 0) return state
+      const p = normPhone(phone)
+      const inf = findInfluencerByPhone(state.influencers, p)
+      if (!inf) return state
+      const pnid =
+        hint ||
+        state.liveInbox.connection?.phone_number_id ||
+        state.conversations.find(
+          (c) => c.influencerId === inf.id && c.channel === 'whatsapp' && c.isLive,
+        )?.phoneNumberId ||
+        'wa_live'
+      const convId = conversationKey(ORG_ID, 'whatsapp', pnid, inf.id)
+      const conv = state.conversations.find((c) => c.id === convId)
+      if (!conv) return state
+
+      const existingIds = new Set(
+        state.messages
+          .filter((m) => m.conversationId === convId)
+          .map((m) => m.metaMessageId)
+          .filter(Boolean),
+      )
+      const existingLocalIds = new Set(
+        state.messages
+          .filter((m) => m.conversationId === convId)
+          .map((m) => m.id),
+      )
+
+      const newMsgs: Message[] = []
+      for (const m of apiMsgs) {
+        const wamid = m.wamid || m.id
+        if (wamid && existingIds.has(wamid)) continue
+        if (m.id && existingLocalIds.has(m.id)) continue
+        const body =
+          m.body ||
+          m.caption ||
+          m.emoji ||
+          `[${m.message_type || 'message'}]`
+        newMsgs.push({
+          id: m.id || uid('msg'),
+          conversationId: convId,
+          organizationId: ORG_ID,
+          channel: 'whatsapp',
+          direction: m.direction,
+          body,
+          status: mapLiveStatus(m.status, m.direction),
+          isTemplate: Boolean(m.is_template),
+          createdAt: m.created_at,
+          metaMessageId: wamid || m.id || uid('meta'),
+        })
+      }
+      if (newMsgs.length === 0) return state
+
+      const sorted = [...newMsgs].sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )
+      const lastMsg = sorted[sorted.length - 1]
+      const lastInbound = [...sorted]
+        .reverse()
+        .find((m) => m.direction === 'inbound')
+
+      const isSelected = state.selectedConversationId === convId
+      const newInboundCount = sorted.filter((m) => m.direction === 'inbound').length
+
+      return {
+        ...state,
+        messages: [...state.messages, ...newMsgs],
+        conversations: state.conversations.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                lastMessageAt:
+                  lastMsg.createdAt > c.lastMessageAt
+                    ? lastMsg.createdAt
+                    : c.lastMessageAt,
+                lastPreview: lastMsg.body.slice(0, 80),
+                lastInboundAt:
+                  lastInbound &&
+                  (!c.lastInboundAt || lastInbound.createdAt > c.lastInboundAt)
+                    ? lastInbound.createdAt
+                    : c.lastInboundAt,
+                unreadCount: isSelected
+                  ? 0
+                  : c.unreadCount + newInboundCount,
+              }
+            : c,
+        ),
+      }
+    }
     default:
       return state
   }
@@ -1292,6 +1556,9 @@ interface StoreContextValue {
       phoneNumberId?: string
       campaignId?: string | null
     }) => void
+    setLivePolling: (polling: boolean) => void
+    syncLiveInboxNow: () => Promise<void>
+    sendWhatsAppReplyLive: (conversationId: string, body: string) => Promise<boolean>
   }
 }
 
@@ -1462,6 +1729,122 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     [canFreeformReply],
   )
 
+  // Latest-state ref so polling closure can read fresh conversations/influencers
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  const doLiveSync = useCallback(async () => {
+    try {
+      const threads = await listWhatsAppInbox()
+      dispatch({ type: 'MERGE_INBOX_THREADS', threads })
+
+      const cur = stateRef.current
+      const sel = cur.conversations.find(
+        (c) => c.id === cur.selectedConversationId,
+      )
+      if (sel && sel.channel === 'whatsapp' && sel.isLive) {
+        const inf = cur.influencers.find((i) => i.id === sel.influencerId)
+        const phoneDigits = normPhone(inf?.phone || '')
+        if (phoneDigits) {
+          try {
+            const msgs = await getWhatsAppInboxMessages(phoneDigits)
+            dispatch({
+              type: 'MERGE_INBOX_MESSAGES',
+              payload: {
+                phone: phoneDigits,
+                messages: msgs,
+                phoneNumberId: sel.phoneNumberId,
+              },
+            })
+          } catch {
+            /* per-thread errors are non-fatal */
+          }
+        }
+      }
+      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: null })
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : (e as Error).message
+      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: msg })
+    }
+  }, [])
+
+  const sendWhatsAppReplyLive = useCallback(
+    async (conversationId: string, body: string) => {
+      const conv = stateRef.current.conversations.find(
+        (c) => c.id === conversationId,
+      )
+      if (!conv) return false
+      const inf = stateRef.current.influencers.find(
+        (i) => i.id === conv.influencerId,
+      )
+      const phoneDigits = normPhone(inf?.phone || '')
+      if (!phoneDigits) return false
+      if (!canFreeformReply(conversationId)) return false
+      const msgId = uid('msg')
+      // Optimistic local send
+      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId })
+      try {
+        await sendWhatsAppText({
+          to: phoneDigits,
+          text: body,
+          phone_number_id: conv.phoneNumberId,
+        })
+        // Trigger a fresh pull so we get delivery/read receipts sooner
+        void doLiveSync()
+        return true
+      } catch (e) {
+        dispatch({
+          type: 'ADVANCE_MESSAGE_STATUS',
+          messageId: msgId,
+          status: 'failed',
+        })
+        dispatch({
+          type: 'ADD_TOAST',
+          toast: {
+            message:
+              e instanceof ApiError
+                ? `WhatsApp: ${e.message}`
+                : 'WhatsApp send failed',
+            variant: 'error',
+          },
+        })
+        return false
+      }
+    },
+    [canFreeformReply, doLiveSync],
+  )
+
+  // Fetch connection info once on mount so the WA status pill lights up.
+  useEffect(() => {
+    if (state.liveInbox.connection) return
+    let cancelled = false
+    getWhatsAppConnection()
+      .then((conn) => {
+        if (!cancelled)
+          dispatch({ type: 'SET_LIVE_CONNECTION', connection: conn ?? null })
+      })
+      .catch(() => {
+        /* proxy unreachable — silently ignore, polling loop will surface error */
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 15-second live polling loop for the WhatsApp inbox.
+  useEffect(() => {
+    if (!state.liveInbox.polling) return
+    // Fire immediately, then every 15s.
+    void doLiveSync()
+    const id = window.setInterval(() => {
+      void doLiveSync()
+    }, 15000)
+    return () => window.clearInterval(id)
+  }, [state.liveInbox.polling, state.selectedConversationId, doLiveSync])
+
   const actions = useMemo(
     (): StoreContextValue['actions'] => ({
       setTab: (tab) => dispatch({ type: 'SET_TAB', tab }),
@@ -1556,6 +1939,9 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       logWhatsAppSends: (payload) => {
         dispatch({ type: 'LOG_WHATSAPP_SENDS', payload })
       },
+      setLivePolling: (polling) => dispatch({ type: 'SET_LIVE_POLLING', polling }),
+      syncLiveInboxNow: () => doLiveSync(),
+      sendWhatsAppReplyLive,
     }),
     [
       toast,
@@ -1567,6 +1953,8 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       getConversationInfluencer,
       renderPreview,
       state.channels,
+      doLiveSync,
+      sendWhatsAppReplyLive,
     ],
   )
 
