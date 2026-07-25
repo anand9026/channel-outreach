@@ -4,6 +4,7 @@ import {
   Loader2,
   RefreshCw,
   Send,
+  Trash2,
   Upload,
   X,
   Zap,
@@ -18,7 +19,7 @@ import {
   type MetaTemplate,
 } from '../lib/api'
 import { findPhoneColumn, normalizePhone, parseCsv, parsePhoneList } from '../lib/csv'
-import { extractMetaSlots, fillMetaBody } from '../lib/templateSlots'
+import { extractMetaSlots } from '../lib/templateSlots'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 
 type SendStatus = 'idle' | 'queued' | 'sending' | 'sent' | 'failed'
@@ -32,54 +33,185 @@ type Recipient = {
   wamid?: string
 }
 
+/**
+ * A variable binding is either a fixed literal or "pull from CSV column".
+ */
+type VarBinding = { source: 'literal'; value: string } | { source: 'column'; column: string }
+
+const STORAGE_KEY = 'rx-quicksend-v2'
+
+type PersistedState = {
+  templateId: string
+  bindings: Record<string, VarBinding>
+  csvHeaders: string[]
+  phoneColumn: string | null
+  recipients: Array<Omit<Recipient, 'status' | 'error' | 'wamid'>>
+}
+
+function loadPersisted(): PersistedState | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as PersistedState) : null
+  } catch {
+    return null
+  }
+}
+
+function savePersisted(s: PersistedState) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Auto-map CSV columns to template slots (fuzzy). */
+function autoMapColumns(
+  slots: string[],
+  headers: string[],
+  templateExample: string[],
+): Record<string, VarBinding> {
+  const nonPhone = headers.filter((h) => !/phone|mobile|whatsapp|number/i.test(h))
+  const bindings: Record<string, VarBinding> = {}
+
+  slots.forEach((slot, i) => {
+    // Heuristic 1: slot label matches column ("name" → {{1}}, "first_name" → {{2}}, etc.)
+    const guess =
+      slot === '1'
+        ? nonPhone.find((h) => /^(first[_ -]?name|name)$/i.test(h))
+        : slot === '2'
+          ? nonPhone.find((h) => /^(last[_ -]?name|surname|company|brand)$/i.test(h))
+          : nonPhone.find((h) => h.toLowerCase() === `var${slot}` || h.toLowerCase() === `v${slot}`)
+    if (guess) {
+      bindings[slot] = { source: 'column', column: guess }
+      return
+    }
+    // Fallback: use template's example value if present
+    const ex = templateExample[i]
+    bindings[slot] = { source: 'literal', value: ex ?? '' }
+  })
+  return bindings
+}
+
+function renderBody(
+  body: string,
+  bindings: Record<string, VarBinding>,
+  row?: Record<string, string>,
+): string {
+  return body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => {
+    const b = bindings[n]
+    if (!b) return `{{${n}}}`
+    if (b.source === 'literal') return b.value || `{{${n}}}`
+    if (row && row[b.column] != null) return row[b.column]
+    return `{{${n}}}`
+  })
+}
+
+function paramsFor(
+  slots: string[],
+  bindings: Record<string, VarBinding>,
+  row?: Record<string, string>,
+): string[] {
+  return slots.map((s) => {
+    const b = bindings[s]
+    if (!b) return ''
+    if (b.source === 'literal') return b.value
+    return row?.[b.column] ?? ''
+  })
+}
+
 export function QuickSendPage() {
   const { state, actions } = useWhatsAppStore()
   const mode = connectionMode(state)
   const waNumbers = state.whatsAppNumbers
   const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string>('')
 
-  // Templates from real API
+  // Templates
   const [templates, setTemplates] = useState<MetaTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [templatesError, setTemplatesError] = useState<string | null>(null)
   const [templateId, setTemplateId] = useState<string>('')
   const selectedTemplate = templates.find((t) => t.id === templateId)
 
-  // Recipients
+  // Recipients + CSV
   const [pasteInput, setPasteInput] = useState('')
   const [recipients, setRecipients] = useState<Recipient[]>([])
   const [csvHeaders, setCsvHeaders] = useState<string[]>([])
   const [phoneColumn, setPhoneColumn] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  // Variables
+  // Variable bindings
   const bodyComponent = useMemo(
     () => selectedTemplate?.components?.find((c) => c.type === 'BODY'),
     [selectedTemplate],
   )
   const bodyText = bodyComponent?.text ?? ''
   const slots = useMemo(() => extractMetaSlots(bodyText), [bodyText])
-  const [samples, setSamples] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    // Prime sample values from the template's own example
-    const ex = bodyComponent?.example?.body_text?.[0] ?? []
-    const next: Record<string, string> = {}
-    slots.forEach((s, i) => {
-      next[s] = ex[i] ?? ''
-    })
-    setSamples(next)
-  }, [templateId, bodyText])
+  const [bindings, setBindings] = useState<Record<string, VarBinding>>({})
 
   // Send state
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const [restored, setRestored] = useState(false)
 
+  // -------- Restore from localStorage on mount --------
+  useEffect(() => {
+    const p = loadPersisted()
+    if (p) {
+      setTemplateId(p.templateId || '')
+      setBindings(p.bindings || {})
+      setCsvHeaders(p.csvHeaders || [])
+      setPhoneColumn(p.phoneColumn || null)
+      setRecipients(
+        (p.recipients || []).map((r) => ({ ...r, status: 'idle' as SendStatus })),
+      )
+    }
+    setRestored(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // -------- Persist on any relevant change --------
+  useEffect(() => {
+    if (!restored) return
+    savePersisted({
+      templateId,
+      bindings,
+      csvHeaders,
+      phoneColumn,
+      recipients: recipients.map(({ phone, name, row }) => ({ phone, name, row })),
+    })
+  }, [restored, templateId, bindings, csvHeaders, phoneColumn, recipients])
+
+  // -------- Default phone number id --------
   useEffect(() => {
     if (mode !== 'none' && waNumbers[0] && !selectedPhoneNumberId) {
       setSelectedPhoneNumberId(waNumbers[0].phoneNumberId)
     }
   }, [mode, waNumbers, selectedPhoneNumberId])
+
+  // -------- When template changes, re-init bindings for slots not yet bound --------
+  useEffect(() => {
+    if (!selectedTemplate) return
+    const example = bodyComponent?.example?.body_text?.[0] ?? []
+    setBindings((prev) => {
+      const next: Record<string, VarBinding> = {}
+      slots.forEach((s, i) => {
+        // If already bound to something valid, keep it. Otherwise prefer example value.
+        const existing = prev[s]
+        if (existing) {
+          if (existing.source === 'column' && !csvHeaders.includes(existing.column)) {
+            next[s] = { source: 'literal', value: example[i] ?? '' }
+          } else {
+            next[s] = existing
+          }
+        } else {
+          next[s] = { source: 'literal', value: example[i] ?? '' }
+        }
+      })
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateId, bodyText])
 
   const loadTemplates = async () => {
     setTemplatesLoading(true)
@@ -88,13 +220,9 @@ export function QuickSendPage() {
       const list = await listWhatsAppTemplates({ status: 'APPROVED', limit: 100 })
       setTemplates(list)
     } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Could not load templates'
-      setTemplatesError(msg)
+      setTemplatesError(
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Could not load templates',
+      )
     } finally {
       setTemplatesLoading(false)
     }
@@ -105,7 +233,7 @@ export function QuickSendPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
-  const addPastedRecipients = () => {
+  const addPasted = () => {
     const phones = parsePhoneList(pasteInput)
     if (phones.length === 0) {
       actions.toast('No valid phone numbers found (need 10+ digits)', 'error')
@@ -117,15 +245,12 @@ export function QuickSendPage() {
       actions.toast('All numbers already in the list', 'info')
       return
     }
-    setRecipients([
-      ...recipients,
-      ...added.map<Recipient>((p) => ({ phone: p, status: 'idle' })),
-    ])
+    setRecipients([...recipients, ...added.map<Recipient>((p) => ({ phone: p, status: 'idle' }))])
     setPasteInput('')
     actions.toast(`Added ${added.length} number${added.length > 1 ? 's' : ''}`, 'success')
   }
 
-  const handleCsvFile = (file: File) => {
+  const handleCsv = (file: File) => {
     const reader = new FileReader()
     reader.onload = (e) => {
       const text = String(e.target?.result ?? '')
@@ -138,45 +263,50 @@ export function QuickSendPage() {
       setCsvHeaders(table.headers)
       setPhoneColumn(col)
 
-      const added: Recipient[] = []
       const existing = new Set(recipients.map((r) => r.phone))
+      const added: Recipient[] = []
       for (const row of table.rows) {
         const raw = col ? row[col] : ''
         const phone = normalizePhone(raw || '')
         if (phone.length < 10 || existing.has(phone)) continue
         existing.add(phone)
-        const nameCol = table.headers.find((h) => /name/i.test(h))
-        added.push({
-          phone,
-          name: nameCol ? row[nameCol] : undefined,
-          row,
-          status: 'idle',
-        })
+        const nameCol = table.headers.find((h) => /^name|first[_ -]?name/i.test(h))
+        added.push({ phone, name: nameCol ? row[nameCol] : undefined, row, status: 'idle' })
       }
+
+      // Auto-map CSV columns to slots (overwrite any prior defaults)
+      if (slots.length > 0) {
+        const ex = bodyComponent?.example?.body_text?.[0] ?? []
+        setBindings(autoMapColumns(slots, table.headers, ex))
+      }
+
       setRecipients([...recipients, ...added])
       actions.toast(`Imported ${added.length} from CSV`, 'success')
     }
     reader.readAsText(file)
   }
 
+  const clearRecipients = () => {
+    setRecipients([])
+    setCsvHeaders([])
+    setPhoneColumn(null)
+  }
+
   const removeRecipient = (phone: string) => {
     setRecipients(recipients.filter((r) => r.phone !== phone))
   }
 
-  const clearRecipients = () => setRecipients([])
+  const setBinding = (slot: string, b: VarBinding) => {
+    setBindings({ ...bindings, [slot]: b })
+  }
 
   const canSend =
-    mode !== 'none' &&
-    selectedPhoneNumberId &&
-    templateId &&
-    recipients.length > 0 &&
-    !sending
+    mode !== 'none' && selectedPhoneNumberId && templateId && recipients.length > 0 && !sending
 
   const runSend = async () => {
     if (!canSend || !selectedTemplate) return
     setSending(true)
     setProgress({ done: 0, total: recipients.length })
-    // Reset any previous statuses
     const initial = recipients.map((r) => ({ ...r, status: 'queued' as SendStatus, error: undefined }))
     setRecipients(initial)
 
@@ -185,14 +315,11 @@ export function QuickSendPage() {
 
     for (let i = 0; i < initial.length; i++) {
       const r = initial[i]
-      // Mark as sending
-      setRecipients((prev) =>
-        prev.map((x, idx) => (idx === i ? { ...x, status: 'sending' } : x)),
-      )
+      setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'sending' } : x)))
 
-      // Build variable values — per-recipient if CSV columns match {{n}} names, else sample values
-      const params: string[] = slots.map((s) => samples[s] ?? '')
-      const preview = fillMetaBody(bodyText, samples)
+      // Per-recipient params + preview
+      const params = paramsFor(slots, bindings, r.row)
+      const preview = renderBody(bodyText, bindings, r.row)
 
       try {
         const res = (await sendWhatsAppTemplate({
@@ -205,28 +332,17 @@ export function QuickSendPage() {
         })) as { messages?: Array<{ id?: string }> } | undefined
 
         const wamid = res?.messages?.[0]?.id
-        setRecipients((prev) =>
-          prev.map((x, idx) =>
-            idx === i ? { ...x, status: 'sent', wamid } : x,
-          ),
-        )
+        setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'sent', wamid } : x)))
         successful.push({ to: r.phone, body: preview, name: r.name, wamid })
       } catch (err) {
         const msg =
-          err instanceof ApiError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Send failed'
-        setRecipients((prev) =>
-          prev.map((x, idx) => (idx === i ? { ...x, status: 'failed', error: msg } : x)),
-        )
+          err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Send failed'
+        setRecipients((prev) => prev.map((x, idx) => (idx === i ? { ...x, status: 'failed', error: msg } : x)))
       }
       doneCount += 1
       setProgress({ done: doneCount, total: initial.length })
     }
 
-    // Log successful sends into the Inbox
     if (successful.length > 0) {
       actions.logWhatsAppSends({
         sends: successful,
@@ -248,7 +364,8 @@ export function QuickSendPage() {
   const totalSent = recipients.filter((r) => r.status === 'sent').length
   const totalFailed = recipients.filter((r) => r.status === 'failed').length
 
-  const previewText = useMemo(() => fillMetaBody(bodyText, samples), [bodyText, samples])
+  const previewRecipient = recipients.find((r) => r.row) ?? recipients[0]
+  const previewText = renderBody(bodyText, bindings, previewRecipient?.row)
 
   if (mode === 'none') {
     return (
@@ -270,7 +387,7 @@ export function QuickSendPage() {
     <div className="rx-page">
       <PageHeader
         title="Quick Send"
-        subtitle="Send any Meta-approved WhatsApp template to any phone number. Paste a list or upload a CSV. Uses live api.dev.getreelax.com."
+        subtitle="Send any Meta-approved WhatsApp template to any phone number. Paste a list or upload a CSV — variables can auto-fill per row."
         actions={
           <button
             type="button"
@@ -293,48 +410,40 @@ export function QuickSendPage() {
         }
       />
 
-      {/* From number */}
       <div className="rx-card compact rx-mb-4">
-        <div className="rx-row" style={{ justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div className="rx-label" style={{ marginBottom: 4 }}>
-              Sending from
-            </div>
-            {waNumbers.length > 1 ? (
-              <select
-                className="rx-select"
-                value={selectedPhoneNumberId}
-                onChange={(e) => setSelectedPhoneNumberId(e.target.value)}
-              >
-                {waNumbers.map((n) => (
-                  <option key={n.id} value={n.phoneNumberId}>
-                    {n.displayName} · {n.phoneDisplay}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="rx-row">
-                <span className="rx-ch-dot wa" />
-                <strong>{waNumbers[0]?.displayName}</strong>
-                <span className="mono rx-text-sm rx-muted">
-                  {waNumbers[0]?.phoneDisplay}
-                </span>
-                <span className="rx-badge success">{waNumbers[0]?.qualityRating}</span>
-              </div>
-            )}
-          </div>
+        <div className="rx-label" style={{ marginBottom: 6 }}>
+          Sending from
         </div>
+        {waNumbers.length > 1 ? (
+          <select
+            className="rx-select"
+            value={selectedPhoneNumberId}
+            onChange={(e) => setSelectedPhoneNumberId(e.target.value)}
+          >
+            {waNumbers.map((n) => (
+              <option key={n.id} value={n.phoneNumberId}>
+                {n.displayName} · {n.phoneDisplay}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="rx-row">
+            <span className="rx-ch-dot wa" />
+            <strong>{waNumbers[0]?.displayName}</strong>
+            <span className="mono rx-text-sm rx-muted">{waNumbers[0]?.phoneDisplay}</span>
+            <span className="rx-badge success">{waNumbers[0]?.qualityRating}</span>
+          </div>
+        )}
       </div>
 
-      {/* Two-column layout */}
       <div className="rx-split" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        {/* Recipients */}
+        {/* -------- Recipients -------- */}
         <div className="rx-card">
           <div className="rx-section-title">
             <span>Recipients</span>
             {recipients.length > 0 && (
               <button type="button" className="rx-btn ghost sm" onClick={clearRecipients}>
-                Clear all
+                <Trash2 size={12} /> Clear all
               </button>
             )}
           </div>
@@ -354,7 +463,7 @@ export function QuickSendPage() {
               <button
                 type="button"
                 className="rx-btn secondary sm"
-                onClick={addPastedRecipients}
+                onClick={addPasted}
                 disabled={!pasteInput.trim()}
                 data-testid="quicksend-add-pasted"
               >
@@ -364,14 +473,14 @@ export function QuickSendPage() {
           </div>
 
           <div className="rx-field rx-mb-4">
-            <label className="rx-label">Or upload CSV</label>
+            <label className="rx-label">Or upload CSV (with columns for variables)</label>
             <input
               ref={fileInput}
               type="file"
               accept=".csv,text/csv"
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                if (f) handleCsvFile(f)
+                if (f) handleCsv(f)
                 if (fileInput.current) fileInput.current.value = ''
               }}
               hidden
@@ -386,13 +495,15 @@ export function QuickSendPage() {
             </button>
             {csvHeaders.length > 0 ? (
               <div className="rx-help">
-                Detected columns: <span className="mono">{csvHeaders.join(', ')}</span>
+                Columns detected: <span className="mono">{csvHeaders.join(', ')}</span>
                 <br />
-                Using <span className="mono">{phoneColumn || '—'}</span> as phone column.
+                Phone column: <span className="mono">{phoneColumn || '—'}</span>. Map columns to
+                template variables on the right &rarr;
               </div>
             ) : (
               <div className="rx-help">
-                Any CSV with a column named phone / mobile / whatsapp / number.
+                Any CSV with a phone / mobile / whatsapp / number column. Extra columns can be
+                mapped to template variables.
               </div>
             )}
           </div>
@@ -428,7 +539,7 @@ export function QuickSendPage() {
           )}
         </div>
 
-        {/* Template + preview */}
+        {/* -------- Template + variables + preview -------- */}
         <div className="rx-card">
           <div className="rx-section-title">
             <span>Template</span>
@@ -477,20 +588,21 @@ export function QuickSendPage() {
             <div className="rx-mb-4">
               <div className="rx-section-title">
                 <span>Variables</span>
-                <span className="rx-caption">These fill in {slots.map((s) => `{{${s}}}`).join(', ')}</span>
+                <span className="rx-caption">
+                  {csvHeaders.length > 0
+                    ? 'Map to CSV column or set a fixed value'
+                    : 'Fixed values — upload CSV for per-row personalization'}
+                </span>
               </div>
               <div className="rx-col rx-gap">
                 {slots.map((s) => (
-                  <div key={s} className="rx-field">
-                    <label className="rx-label mono">{`{{${s}}}`}</label>
-                    <input
-                      className="rx-input"
-                      value={samples[s] ?? ''}
-                      onChange={(e) => setSamples({ ...samples, [s]: e.target.value })}
-                      placeholder={`Value for {{${s}}}`}
-                      data-testid={`quicksend-var-${s}`}
-                    />
-                  </div>
+                  <VariableEditor
+                    key={s}
+                    slot={s}
+                    binding={bindings[s] ?? { source: 'literal', value: '' }}
+                    columns={csvHeaders.filter((h) => h !== phoneColumn)}
+                    onChange={(b) => setBinding(s, b)}
+                  />
                 ))}
               </div>
             </div>
@@ -500,6 +612,11 @@ export function QuickSendPage() {
             <>
               <div className="rx-section-title">
                 <span>Preview</span>
+                {previewRecipient?.row ? (
+                  <span className="rx-caption">
+                    Showing render for <strong>+{previewRecipient.phone}</strong>
+                  </span>
+                ) : null}
               </div>
               <div className="rx-preview wa">{previewText || 'Select a template to preview.'}</div>
               <div className="rx-help rx-mt-2">
@@ -514,22 +631,108 @@ export function QuickSendPage() {
   )
 }
 
+/** (deprecated helper — kept for future use) */
+function _unused_maybePreserveLiterals(
+  prev: Record<string, VarBinding>,
+  _headers: string[],
+): Record<string, VarBinding> {
+  const out: Record<string, VarBinding> = {}
+  for (const [k, v] of Object.entries(prev)) {
+    if (v.source === 'literal') out[k] = v
+  }
+  return out
+}
+
+function VariableEditor({
+  slot,
+  binding,
+  columns,
+  onChange,
+}: {
+  slot: string
+  binding: VarBinding
+  columns: string[]
+  onChange: (b: VarBinding) => void
+}) {
+  const isColumn = binding.source === 'column'
+  const hasCsv = columns.length > 0
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        padding: 12,
+        background: 'var(--surface-2)',
+      }}
+    >
+      <div className="rx-row rx-mb-2" style={{ justifyContent: 'space-between' }}>
+        <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{`{{${slot}}}`}</span>
+        {hasCsv && (
+          <div className="rx-seg" style={{ padding: 2 }}>
+            <button
+              className={`rx-seg-btn${!isColumn ? ' is-active' : ''}`}
+              onClick={() =>
+                onChange({
+                  source: 'literal',
+                  value: binding.source === 'literal' ? binding.value : '',
+                })
+              }
+              data-testid={`quicksend-var-${slot}-fixed`}
+              style={{ padding: '4px 10px', fontSize: 11.5 }}
+            >
+              Fixed
+            </button>
+            <button
+              className={`rx-seg-btn${isColumn ? ' is-active' : ''}`}
+              onClick={() =>
+                onChange({
+                  source: 'column',
+                  column: binding.source === 'column' ? binding.column : columns[0],
+                })
+              }
+              data-testid={`quicksend-var-${slot}-csv`}
+              style={{ padding: '4px 10px', fontSize: 11.5 }}
+            >
+              From CSV
+            </button>
+          </div>
+        )}
+      </div>
+      {binding.source === 'literal' ? (
+        <input
+          className="rx-input"
+          value={binding.value}
+          onChange={(e) => onChange({ source: 'literal', value: e.target.value })}
+          placeholder={`Value for {{${slot}}}`}
+          data-testid={`quicksend-var-${slot}`}
+        />
+      ) : (
+        <select
+          className="rx-select"
+          value={binding.column}
+          onChange={(e) => onChange({ source: 'column', column: e.target.value })}
+          data-testid={`quicksend-var-${slot}-column`}
+        >
+          {columns.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
 function RecipientRow({ r, onRemove }: { r: Recipient; onRemove: () => void }) {
   return (
     <div
       className="rx-row"
-      style={{
-        padding: '8px 12px',
-        background: 'var(--surface-2)',
-        borderRadius: 8,
-        gap: 10,
-      }}
+      style={{ padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 8, gap: 10 }}
     >
       <StatusIcon status={r.status} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
-          +{r.phone}
-        </div>
+        <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>+{r.phone}</div>
         {r.name ? <div className="rx-text-xs rx-muted">{r.name}</div> : null}
         {r.error ? (
           <div className="rx-text-xs" style={{ color: 'var(--danger)' }}>
@@ -538,12 +741,7 @@ function RecipientRow({ r, onRemove }: { r: Recipient; onRemove: () => void }) {
         ) : null}
       </div>
       {r.status === 'idle' ? (
-        <button
-          type="button"
-          className="rx-icon-btn"
-          onClick={onRemove}
-          aria-label="Remove"
-        >
+        <button type="button" className="rx-icon-btn" onClick={onRemove} aria-label="Remove">
           <X size={14} />
         </button>
       ) : null}
