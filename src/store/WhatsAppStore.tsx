@@ -2192,7 +2192,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     )
     if (em && em.userId) {
       try {
-        const res = await listGmailThreads({ user_id: em.userId, limit: 40 })
+        const res = await listGmailThreads({ user_id: em.userId })
         if (res && res.length > 0) {
           dispatch({
             type: 'MERGE_GMAIL_THREADS',

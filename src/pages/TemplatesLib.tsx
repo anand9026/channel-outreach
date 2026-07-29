@@ -42,7 +42,7 @@ export function TemplatesLib() {
   const [metaLoading, setMetaLoading] = useState(false)
   const [metaError, setMetaError] = useState<string | null>(null)
   const [gmailTemplates, setGmailTemplates] = useState<GmailTemplate[]>([])
-  const [gmailError, setGmailError] = useState<string | null>(null)
+  const [, setGmailError] = useState<string | null>(null)
 
   const loadMeta = async () => {
     setMetaLoading(true)
@@ -119,15 +119,15 @@ export function TemplatesLib() {
         .replace(/\s+/g, ' ')
         .trim()
       return {
-        key: `gmail:${t.template_id}`,
+        key: `gmail:${t.template_name}`,
         source: 'gmail',
-        name: t.name || t.template_name,
+        name: t.template_name,
         channel: 'email',
         category: 'UTILITY',
         body: bodyText,
         variables: [],
         status: 'ACTIVE',
-        updatedAt: t.updated_at || t.created_at || '',
+        updatedAt: t.updated_at || '',
       }
     })
 

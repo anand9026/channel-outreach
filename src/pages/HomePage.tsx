@@ -2,8 +2,6 @@ import {
   ArrowUpRight,
   Bell,
   BellOff,
-  Check,
-  CheckCheck,
   Flame,
   Mail,
   MessageCircle,
@@ -12,8 +10,6 @@ import {
   Sparkles,
   TrendingUp,
   Users,
-  Wifi,
-  WifiOff,
   Zap,
 } from 'lucide-react'
 import { useMemo } from 'react'
@@ -39,10 +35,6 @@ function greeting(): string {
   if (h < 17) return 'Good afternoon'
   if (h < 22) return 'Good evening'
   return 'Working late'
-}
-
-function dayKey(iso: string): string {
-  return iso.slice(0, 10)
 }
 
 /**
