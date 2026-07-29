@@ -135,10 +135,20 @@ Use **Save to GitHub** in the chat input when ready.
   - **Wire-ups**: QuickSendPage routes to EmailQuickSend when channel === 'email'; SettingsDrawer + OnboardingSheet redesigned with the "Connect Gmail" card; Layout sidebar shows Email/Gmail status.
 - **2026-07-29 (scroll fix)** — CreateTemplateModal responsive fix:
   - Root modal inline style changed to `width: 'min(920px, calc(100vw - 16px))', maxHeight: 92vh, display: flex, flexDirection: column` so the modal is always bounded by the scrim.
+- **2026-07-29 (Home dashboard)** — Elegant Home landing:
+  - New `HomePage.tsx` — 4 snapshot stats, 3 branded channel cards with sparklines + latest-reply preview + connect CTA, Recent activity feed, Quick actions rail. Time-aware greeting.
+  - Added `home` tab, new Home nav item, made Home the default landing tab; legacy 'floor' redirects to Home.
+  - Updated files: `src/App.tsx`, `src/components/Layout.tsx`, `src/pages/HomePage.tsx` (new), `src/store/WhatsAppStore.tsx`, `src/types.ts`, `src/index.css`.
+
   - Added `@media (max-width: 640px)` in `index.css` stacking `.rx-tpl-cta-row`, wrapping the top Name/Category/Language row + `.rx-tpl-section-head` segmented controls, halving scrim padding to 8px, forcing `.rx-tpl-samples` to 1fr.
   - Self-verified at 390x844: modal.right=382 vs viewport=390 (fits), CTA button visible + clickable, body scrolls (1067 / 634), head + foot pinned.
 
-- **2026-07-29 (Home dashboard)** — Elegant Home landing:
+- **2026-07-29 (Gmail identity in sidebar + userId storage)** — Small but meaningful UX polish:
+  - Sidebar footer email row now displays the connected `fromEmail` (mono, truncated at 140px with title tooltip) instead of the generic "Email live" label — so users always see which Gmail account is powering their sending.
+  - Added `userId?: string` to `EmailAccount` type + extended `SYNC_GMAIL` reducer to persist Gmail's `user_id` from `getGmailConnection()` — required to call any Gmail API endpoint (`listGmailThreads`, `sendGmailMessage`, etc.) on behalf of the connected user.
+  - This unblocks future Gmail inbox polling and template creation against the real Gmail API — every downstream call now has the user identifier it needs.
+  - Updated files: `src/components/Layout.tsx`, `src/types.ts`, `src/store/WhatsAppStore.tsx`.
+
   - New `HomePage.tsx` — 4 snapshot stats (Sent 7d / Unread / Hot leads / Active campaigns), 3 branded channel cards (WhatsApp/Instagram/Email) with per-channel Sent/Threads/Unread/Response metrics + 7-day sparkline + latest reply preview + connect CTA when not connected, Recent activity feed (last 6 inbound with channel-color dots), Quick actions rail.
   - Time-aware greeting ("Good morning/afternoon/evening/Working late").
   - Added `home` tab to `TabId`, new "Home" nav item in the sidebar with Home icon, made Home the default landing tab.

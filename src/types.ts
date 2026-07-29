@@ -85,6 +85,8 @@ export interface EmailAccount {
   domain: string
   verified: boolean
   connectedAt: string
+  /** Gmail OAuth user id — required to call the Gmail API */
+  userId?: string
 }
 
 export interface InstagramAccount {

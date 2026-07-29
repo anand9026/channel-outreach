@@ -163,6 +163,7 @@ type Action =
         connected: boolean
         emailAddress?: string | null
         channelId?: string | null
+        userId?: string
       }
     }
   | {
@@ -595,6 +596,7 @@ function reducer(state: AppState, action: Action): AppState {
         domain: email.split('@')[1] || 'gmail.com',
         verified: true,
         connectedAt: existing?.connectedAt || nowIso(),
+        userId: action.payload.userId,
       }
       return {
         ...state,
@@ -2192,6 +2194,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             connected: Boolean(info?.connected && info.email_address),
             emailAddress: info?.email_address,
             channelId: info?.channel_id,
+            userId: info?.user_id,
           },
         })
         if (gmailStatus === 'connected') {
@@ -2424,6 +2427,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             connected: Boolean(info?.connected && info.email_address),
             emailAddress: info?.email_address,
             channelId: info?.channel_id,
+            userId: info?.user_id,
           },
         })
       },

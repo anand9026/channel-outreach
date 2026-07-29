@@ -95,12 +95,18 @@ export function Layout({ children }: { children: ReactNode }) {
             />
             Instagram {state.instagramAccounts.length ? 'live' : 'not connected'}
           </div>
-          <div className="rx-conn-status">
+          <div className="rx-conn-status" title={state.emailAccounts[0]?.fromEmail}>
             <span
               className={`rx-dot${emailConnected ? ' is-live-email' : ''}`}
               aria-hidden
             />
-            Email {emailConnected ? 'live' : 'not connected'}
+            {emailConnected ? (
+              <span className="rx-conn-email mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140, display: 'inline-block', verticalAlign: 'middle' }}>
+                {state.emailAccounts[0]?.fromEmail || 'Email live'}
+              </span>
+            ) : (
+              'Email not connected'
+            )}
           </div>
           <button
             type="button"
