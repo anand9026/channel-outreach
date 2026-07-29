@@ -1,0 +1,64 @@
+{
+  "verdict": "not_fixed",
+  "user_reported_bug": "there are some scroll issue in template creation flow",
+  "summary": "No relevant testing skill found. Focused Playwright verification of Messages > New template showed the desktop scroll structure works and the optional one-template submit succeeded, but the mobile/tablet horizontal overflow fix is not working: at 390x844 and 800x700 the modal remains 920px wide and extends beyond the viewport.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "CreateTemplateModal / .rx-tpl-modal",
+        "issue": "At 390x844, modal right edge was 928px with innerWidth 390; documentElement.scrollWidth was 753px. The Call to action toggle was off-viewport (left 807, right 894) and a normal Playwright click failed because the element was outside the viewport.",
+        "selector": ".rx-tpl-modal, [data-testid='buttons-cta']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "CreateTemplateModal / .rx-tpl-modal",
+        "issue": "At 800x700, modal right edge was 940px with innerWidth 800; documentElement.scrollWidth was 1001px. The modal did collapse to one column, but horizontal overflow remained and the CTA toggle was still outside the viewport for a normal click.",
+        "selector": ".rx-tpl-modal, .rx-tpl-body, [data-testid='buttons-cta']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Messages > New template modal",
+        "issues": [
+          "Mobile/tablet modal width is not viewport-constrained despite maxWidth:'100%'.",
+          "CTA row and top Name/Category/Language row stack after forced JS enablement, but they stack inside an off-canvas 920px modal, so the user-visible overflow remains.",
+          "The section header segmented controls should also wrap/stack on narrow screens; otherwise the CTA toggle can remain clipped even after modal width is fixed."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/template_modal_scroll_iteration4.py",
+    "/app/test_reports/iteration4_playwright_raw.json"
+  ],
+  "action_items": [
+    "Constrain .rx-tpl-modal to the viewport on narrow and tablet widths, e.g. use a viewport-capped width/max-width rather than inline width:920 with maxWidth:'100%'.",
+    "Add narrow-screen wrapping/stacking for .rx-tpl-section-head and its .rx-seg controls so Header/Buttons options remain reachable at 390px.",
+    "Retest 390x844, 800x700, and 1440x800 after the sizing fix."
+  ],
+  "critical_code_review_comments": [
+    "CreateTemplateModal.tsx currently renders inline width:920 and maxWidth:'100%'; runtime measurements show this still produces a 920px modal at 390px and 800px viewports, so the intended scrim padding-box constraint is not effective.",
+    "index.css mobile fixes for .rx-tpl-cta-row and the top field row are not sufficient while the modal itself is off-canvas, and section header controls are not wrapped."
+  ],
+  "updated_files": [
+    "/app/test_reports/template_modal_scroll_iteration4.py",
+    "/app/test_reports/iteration4_playwright_raw.json",
+    "/app/test_reports/bug_verification_4.json",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only)",
+    "frontend": "33%"
+  },
+  "seed_data_creation": "Bypassed onboarding with demo data. Optional single submit attempt created/submitted one template named test_scroll_v4_4e7l3; it returned success and closed the modal.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Raw measurements are in /app/test_reports/iteration4_playwright_raw.json. Desktop 1440x800 passed the key scroll behavior: body scrollTop moved 0->313, head/footer rects stayed pinned, preview position was sticky and stayed next to the form while the form scrolled, and windowScrollY stayed 0. Mobile/tablet failed on modal/document horizontal overflow.",
+  "rca_of_the_issue": "Repro: set viewport 390x844, open Messages > New template, scroll to Buttons. The modal remains 920px wide (left 8/right 928), document scrollWidth becomes 753px, and the CTA toggle is rendered off-screen. At 800x700 the modal remains 920px wide (left 20/right 940) with document scrollWidth 1001px. The new stacking CSS is applied, but it applies inside an unconstrained off-canvas modal, so it does not resolve the user-visible horizontal overflow. No APIs were mocked."
+}

@@ -1,0 +1,341 @@
+{
+  "skill_lookup": "No relevant testing skill found.",
+  "viewports": {
+    "390x844": {
+      "clicks": {
+        "buttons-cta": {
+          "testid": "buttons-cta",
+          "playwright_click": false,
+          "fallback_js_click": true,
+          "error": "Locator.click: Element is outside of the viewport\nCall log:\n  - waiting for get_by_test_id(\"buttons-cta\")\n    - locator resolved to <button class=\"rx-seg-btn\" data-testid=\"buttons-cta\">Call to action</button>\n  - attempting click action\n    - scrolling into view if needed\n    - done scrolling\n"
+        }
+      },
+      "viewport": {
+        "innerWidth": 390,
+        "innerHeight": 844
+      },
+      "modalRect": {
+        "left": 8,
+        "top": 33.765625,
+        "right": 928,
+        "bottom": 810.234375,
+        "width": 920,
+        "height": 776.46875
+      },
+      "bodyRect": {
+        "left": 8,
+        "top": 102.515625,
+        "right": 928,
+        "bottom": 753.734375,
+        "width": 920,
+        "height": 651.21875
+      },
+      "ctaRect": {
+        "left": 39,
+        "top": 326.015625,
+        "right": 897,
+        "bottom": 494.515625,
+        "width": 858,
+        "height": 168.5
+      },
+      "ctaToggleRect": {
+        "left": 807,
+        "top": 290.515625,
+        "right": 894,
+        "bottom": 315.015625,
+        "width": 87,
+        "height": 24.5
+      },
+      "ctaRects": [
+        {
+          "left": 39,
+          "top": 326.015625,
+          "right": 897,
+          "bottom": 365.015625,
+          "width": 858,
+          "height": 39
+        },
+        {
+          "left": 39,
+          "top": 373.015625,
+          "right": 897,
+          "bottom": 413.265625,
+          "width": 858,
+          "height": 40.25
+        },
+        {
+          "left": 39,
+          "top": 421.265625,
+          "right": 897,
+          "bottom": 461.515625,
+          "width": 858,
+          "height": 40.25
+        }
+      ],
+      "topRowRect": {
+        "left": 24,
+        "top": -460.734375,
+        "right": 912,
+        "bottom": -246.484375,
+        "width": 888,
+        "height": 214.25
+      },
+      "topFieldRects": [
+        {
+          "left": 24,
+          "top": -460.734375,
+          "right": 912,
+          "bottom": -396.484375,
+          "width": 888,
+          "height": 64.25
+        },
+        {
+          "left": 24,
+          "top": -384.484375,
+          "right": 912,
+          "bottom": -321.484375,
+          "width": 888,
+          "height": 63
+        },
+        {
+          "left": 24,
+          "top": -309.484375,
+          "right": 912,
+          "bottom": -246.484375,
+          "width": 888,
+          "height": 63
+        }
+      ],
+      "submitRect": {
+        "left": 784,
+        "top": 766.734375,
+        "right": 912,
+        "bottom": 798.234375,
+        "width": 128,
+        "height": 31.5
+      },
+      "bodyClientWidth": 920,
+      "bodyScrollWidth": 920,
+      "bodyClientHeight": 651,
+      "bodyScrollHeight": 1269,
+      "bodyScrollTopBefore": 345,
+      "bodyScrollTopAfter": 618,
+      "docClientWidth": 390,
+      "docScrollWidth": 753,
+      "windowScrollY": 0,
+      "modalFitsRight": false,
+      "bodyNoHorizontalOverflow": true,
+      "documentNoHorizontalOverflow": false,
+      "ctaStacked": true,
+      "ctaFullWidth": true,
+      "topStacked": true,
+      "topFullWidth": true,
+      "ctaToggleVisibleInViewport": false,
+      "bodyCanScrollVertically": true,
+      "bodyScrolledToBottom": true,
+      "submitVisibleAfterScroll": true
+    },
+    "1440x800": {
+      "clicks": {
+        "header-image": {
+          "testid": "header-image",
+          "playwright_click": true,
+          "fallback_js_click": false,
+          "error": null
+        },
+        "buttons-cta": {
+          "testid": "buttons-cta",
+          "playwright_click": true,
+          "fallback_js_click": false,
+          "error": null
+        }
+      },
+      "pre": {
+        "modalRect": {
+          "left": 260,
+          "top": 32,
+          "right": 1180,
+          "bottom": 768,
+          "width": 920,
+          "height": 736
+        },
+        "bodyRect": {
+          "left": 260,
+          "top": 110.75,
+          "right": 1180,
+          "bottom": 703.5,
+          "width": 920,
+          "height": 592.75
+        },
+        "headRect": {
+          "left": 260,
+          "top": 32,
+          "right": 1180,
+          "bottom": 110.75,
+          "width": 920,
+          "height": 78.75
+        },
+        "footRect": {
+          "left": 260,
+          "top": 703.5,
+          "right": 1180,
+          "bottom": 768,
+          "width": 920,
+          "height": 64.5
+        },
+        "previewRect": {
+          "left": 816,
+          "top": 122.75,
+          "right": 1156,
+          "bottom": 487.125,
+          "width": 340,
+          "height": 364.375
+        },
+        "formRect": {
+          "left": 284,
+          "top": 118.75,
+          "right": 792,
+          "bottom": 992.75,
+          "width": 508,
+          "height": 874
+        },
+        "bodyClientHeight": 593,
+        "bodyScrollHeight": 906,
+        "bodyScrollTop": 0,
+        "bodyClientWidth": 920,
+        "bodyScrollWidth": 920,
+        "gridTemplateColumns": "508px 340px",
+        "previewPosition": "sticky",
+        "windowScrollY": 0,
+        "documentScrollHeight": 1254,
+        "documentClientHeight": 800
+      },
+      "post": {
+        "modalRect": {
+          "left": 260,
+          "top": 32,
+          "right": 1180,
+          "bottom": 768,
+          "width": 920,
+          "height": 736
+        },
+        "bodyRect": {
+          "left": 260,
+          "top": 110.75,
+          "right": 1180,
+          "bottom": 703.5,
+          "width": 920,
+          "height": 592.75
+        },
+        "headRect": {
+          "left": 260,
+          "top": 32,
+          "right": 1180,
+          "bottom": 110.75,
+          "width": 920,
+          "height": 78.75
+        },
+        "footRect": {
+          "left": 260,
+          "top": 703.5,
+          "right": 1180,
+          "bottom": 768,
+          "width": 920,
+          "height": 64.5
+        },
+        "previewRect": {
+          "left": 816,
+          "top": 122.75,
+          "right": 1156,
+          "bottom": 487.125,
+          "width": 340,
+          "height": 364.375
+        },
+        "formRect": {
+          "left": 284,
+          "top": -194.25,
+          "right": 792,
+          "bottom": 679.75,
+          "width": 508,
+          "height": 874
+        },
+        "bodyClientHeight": 593,
+        "bodyScrollHeight": 906,
+        "bodyScrollTop": 313,
+        "bodyClientWidth": 920,
+        "bodyScrollWidth": 920,
+        "gridTemplateColumns": "508px 340px",
+        "previewPosition": "sticky",
+        "windowScrollY": 0
+      },
+      "wheel": {
+        "windowScrollY": 0,
+        "bodyScrollTop": 313
+      },
+      "checks": {
+        "bodyCanScrollVertically": true,
+        "bodyScrolled": true,
+        "bodyNoHorizontalOverflow": true,
+        "headPinned": true,
+        "footPinned": true,
+        "previewSticky": false,
+        "noPageScrollDuringModalBodyScroll": true,
+        "documentNotTallerThanViewport": false
+      }
+    },
+    "800x700": {
+      "clicks": {
+        "buttons-cta": {
+          "testid": "buttons-cta",
+          "playwright_click": false,
+          "fallback_js_click": true,
+          "error": "Locator.click: Element is outside of the viewport\nCall log:\n  - waiting for get_by_test_id(\"buttons-cta\")\n    - locator resolved to <button class=\"rx-seg-btn\" data-testid=\"buttons-cta\">Call to action</button>\n  - attempting click action\n    - scrolling into view if needed\n    - done scrolling\n"
+        }
+      },
+      "viewport": {
+        "innerWidth": 800,
+        "innerHeight": 700
+      },
+      "modalRect": {
+        "left": 20,
+        "top": 28,
+        "right": 940,
+        "bottom": 672,
+        "width": 920,
+        "height": 644
+      },
+      "bodyRect": {
+        "left": 20,
+        "top": 106.75,
+        "right": 940,
+        "bottom": 607.5,
+        "width": 920,
+        "height": 500.75
+      },
+      "previewRect": {
+        "left": 44,
+        "top": 563,
+        "right": 916,
+        "bottom": 728.5,
+        "width": 872,
+        "height": 165.5
+      },
+      "bodyClientWidth": 920,
+      "bodyScrollWidth": 920,
+      "docClientWidth": 800,
+      "docScrollWidth": 1001,
+      "gridTemplateColumns": "872px",
+      "previewPosition": "static",
+      "modalFitsRight": false,
+      "bodyNoHorizontalOverflow": true,
+      "documentNoHorizontalOverflow": false,
+      "collapsedSingleColumn": true,
+      "previewNotSticky": true
+    }
+  },
+  "optional_submit": {
+    "template_name": "test_scroll_v4_4e7l3",
+    "status": "success",
+    "modal_closed": true
+  }
+}
