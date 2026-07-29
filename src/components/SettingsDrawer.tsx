@@ -20,6 +20,9 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
   const [ruleKeywords, setRuleKeywords] = useState('')
   const [ruleLabels, setRuleLabels] = useState('')
 
+  const gmailAccount = state.emailAccounts.find((a) => a.provider === 'gmail')
+  const emailConnected = Boolean(gmailAccount)
+
   return (
     <>
       <Drawer open={open} onClose={onClose} title="Settings" subtitle="Channels · Brands · Team · Preferences" size="lg">
@@ -112,17 +115,17 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
             ) : null}
           </div>
 
-          {/* Email */}
+          {/* Email / Gmail */}
           <div className="rx-card compact rx-mb-4">
             <div className="rx-row">
               <div className="rx-connect-icon email">
                 <Mail size={18} />
               </div>
               <div style={{ flex: 1 }}>
-                <div className="rx-card-title">Email</div>
+                <div className="rx-card-title">Gmail</div>
                 <div className="rx-card-sub">
-                  {state.emailAccounts.length
-                    ? `${state.emailAccounts.length} sending domain${state.emailAccounts.length > 1 ? 's' : ''}`
+                  {emailConnected
+                    ? gmailAccount?.fromEmail || '1 Gmail connection'
                     : 'Not connected'}
                 </div>
               </div>
@@ -131,32 +134,29 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 className="rx-btn secondary sm"
                 onClick={() => setEmailDrawer(true)}
               >
-                <Plus size={14} /> Add domain
+                <Plus size={14} /> {emailConnected ? 'Reconnect' : 'Connect Gmail'}
               </button>
             </div>
-            {state.emailAccounts.length ? (
+            {emailConnected && gmailAccount ? (
               <div className="rx-col rx-gap" style={{ marginTop: 12 }}>
-                {state.emailAccounts.map((e) => (
-                  <div
-                    key={e.id}
-                    className="rx-row"
-                    style={{
-                      padding: '10px 12px',
-                      background: 'var(--surface-2)',
-                      borderRadius: 8,
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{e.fromName}</div>
-                      <div className="mono rx-text-xs rx-muted">
-                        {e.fromEmail} · {e.provider.toUpperCase()}
-                      </div>
+                <div
+                  className="rx-row"
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--surface-2)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{gmailAccount.fromName}</div>
+                    <div className="mono rx-text-xs rx-muted">
+                      {gmailAccount.fromEmail} · Gmail
                     </div>
-                    <span className="rx-badge success">
-                      <CheckCircle2 size={11} /> Verified
-                    </span>
                   </div>
-                ))}
+                  <span className="rx-badge success">
+                    <CheckCircle2 size={11} /> Verified
+                  </span>
+                </div>
               </div>
             ) : null}
           </div>

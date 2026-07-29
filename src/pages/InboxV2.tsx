@@ -11,7 +11,6 @@ import {
   Filter,
   Flame,
   Heart,
-  Image as ImageIcon,
   Inbox as InboxIcon,
   Mail,
   MessageCircle,
@@ -102,11 +101,6 @@ function passesSavedView(c: Conversation, view: SavedView, messagesForConv: Mess
   }
 }
 
-function channelIcon(ch: OutreachChannel) {
-  if (ch === 'whatsapp') return <MessageCircle size={13} />
-  if (ch === 'instagram') return <IgIcon size={13} />
-  return <Mail size={13} />
-}
 function channelBadgeLetter(ch: OutreachChannel) {
   if (ch === 'whatsapp') return 'W'
   if (ch === 'instagram') return 'I'

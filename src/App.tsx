@@ -1,6 +1,7 @@
 import './App.css'
 import { CommandPalette } from './components/CommandPalette'
 import { Layout } from './components/Layout'
+import { ConnectPage } from './pages/ConnectPage'
 import { CampaignsHub } from './pages/CampaignsHub'
 import { InboxV2 } from './pages/InboxV2'
 import { QuickSendPage } from './pages/QuickSendPage'
@@ -19,9 +20,10 @@ function Router() {
       return <ResultsV2 />
     case 'quicksend':
       return <QuickSendPage />
+    case 'connect':
+      return <ConnectPage />
     case 'floor':
     case 'campaigns':
-    case 'connect':
     default:
       return <CampaignsHub />
   }

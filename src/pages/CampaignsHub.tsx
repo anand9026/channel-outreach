@@ -43,6 +43,7 @@ export function CampaignsHub() {
   }
 
   const emptyReady = mode !== 'none' && state.campaigns.length === 0
+  const connectNeeded = mode === 'none'
 
   return (
     <div className="rx-page">
@@ -79,6 +80,32 @@ export function CampaignsHub() {
             Pick a saved list of creators, choose a message, and pick a strategy. Reelax handles
             delivery, follow-ups, and pulls replies into a single inbox.
           </p>
+          {connectNeeded ? (
+            <div className="rx-card compact" style={{ marginTop: 16, maxWidth: 560 }}>
+              <div className="rx-card-title">Start here</div>
+              <div className="rx-card-sub">
+                No channels are connected yet. Open the Connect screen to add WhatsApp, Gmail, or
+                both.
+              </div>
+              <div className="rx-row" style={{ marginTop: 12, gap: 12 }}>
+                <button
+                  type="button"
+                  className="rx-btn accent"
+                  onClick={() => actions.setTab('connect')}
+                  data-testid="goto-connect"
+                >
+                  Connect channels
+                </button>
+                <button
+                  type="button"
+                  className="rx-btn secondary"
+                  onClick={() => actions.setTab('templates')}
+                >
+                  View templates
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="rx-quick-stats">
             <div className="rx-quick-stat">
               <div className="rx-quick-stat-label">Sent</div>
@@ -145,7 +172,6 @@ export function CampaignsHub() {
           {campaigns.map((c) => {
             const analytics = state.analytics.find((a) => a.campaignId === c.id)
             const sent = (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
-            const delivered = (analytics?.whatsapp.delivered || 0) + (analytics?.email.delivered || 0)
             const replies = (analytics?.whatsapp.replied || 0) + (analytics?.email.replied || 0)
             const engagement = sent > 0 ? Math.round((replies / sent) * 100) : 0
             const channels = state.channels.filter((ch) => ch.campaignId === c.id)

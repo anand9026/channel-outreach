@@ -6,7 +6,9 @@ import { ChannelBadge, TemplateStatusBadge } from '../components/StatusBadge'
 import {
   API_BASE_URL,
   ApiError,
+  listGmailTemplates,
   listWhatsAppTemplates,
+  type GmailTemplate,
   type MetaTemplate,
 } from '../lib/api'
 import { fillMetaBody, extractMetaSlots } from '../lib/templateSlots'
@@ -31,7 +33,7 @@ function samplePreview(t: MetaTemplate): string {
 
 export function TemplatesPage() {
   const { state, actions } = useWhatsAppStore()
-  const [listTab, setListTab] = useState<'meta' | 'local'>('meta')
+  const [listTab, setListTab] = useState<'meta' | 'gmail' | 'local'>('meta')
   const [filter, setFilter] = useState<'all' | OutreachChannel>('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'APPROVED' | 'ALL'>('APPROVED')
@@ -39,6 +41,9 @@ export function TemplatesPage() {
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [metaLoading, setMetaLoading] = useState(false)
   const [metaError, setMetaError] = useState<string | null>(null)
+  const [gmailTemplates, setGmailTemplates] = useState<GmailTemplate[]>([])
+  const [gmailLoading, setGmailLoading] = useState(false)
+  const [gmailError, setGmailError] = useState<string | null>(null)
 
   const sortedLocal = useMemo(() => {
     const list =
@@ -75,9 +80,32 @@ export function TemplatesPage() {
     }
   }, [actions])
 
+  const syncGmailTemplates = useCallback(async () => {
+    setGmailLoading(true)
+    setGmailError(null)
+    try {
+      const list = await listGmailTemplates()
+      setGmailTemplates(list)
+      actions.toast(`Synced ${list.length} Gmail template(s)`, 'success')
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to sync Gmail templates'
+      setGmailTemplates([])
+      setGmailError(message)
+      actions.toast(message, 'error')
+    } finally {
+      setGmailLoading(false)
+    }
+  }, [actions])
+
   useEffect(() => {
     void syncMetaTemplates()
-  }, [syncMetaTemplates])
+    void syncGmailTemplates()
+  }, [syncMetaTemplates, syncGmailTemplates])
 
   return (
     <div className="page-grid">
@@ -117,6 +145,13 @@ export function TemplatesPage() {
           >
             Meta WhatsApp
           </button>
+            <button
+              type="button"
+              className={listTab === 'gmail' ? 'active' : ''}
+              onClick={() => setListTab('gmail')}
+            >
+              Gmail
+            </button>
           <button
             type="button"
             className={listTab === 'local' ? 'active' : ''}
@@ -208,6 +243,60 @@ export function TemplatesPage() {
               </table>
             </div>
           </>
+        ) : listTab === 'gmail' ? (
+          <>
+            <div className="row-between" style={{ marginTop: 8 }}>
+              <p className="muted-xs">
+                Source: <code>{API_BASE_URL}</code>
+              </p>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={gmailLoading}
+                onClick={() => void syncGmailTemplates()}
+              >
+                {gmailLoading ? 'Refreshing…' : 'Refresh Gmail'}
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Subject</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gmailTemplates.length === 0 ? (
+                    <tr>
+                      <td colSpan={3}>
+                        <p className="muted">
+                          {gmailError
+                            ? gmailError
+                            : gmailLoading
+                              ? 'Loading…'
+                              : 'No Gmail templates yet. Create one from the button above.'}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    gmailTemplates.map((t) => (
+                      <tr key={t.template_name}>
+                        <td>
+                          <strong>{t.template_name}</strong>
+                        </td>
+                        <td>
+                          <p className="template-preview-cell">{t.subject_template}</p>
+                        </td>
+                        <td>{new Date(t.updated_at).toLocaleString()}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : (
           <>
             <div className="segmented" style={{ marginTop: 8 }}>
@@ -272,7 +361,10 @@ export function TemplatesPage() {
       <CreateTemplateModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={() => void syncMetaTemplates()}
+        onCreated={() => {
+          void syncMetaTemplates()
+          void syncGmailTemplates()
+        }}
       />
     </div>
   )
