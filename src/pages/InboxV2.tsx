@@ -107,6 +107,12 @@ function channelBadgeLetter(ch: OutreachChannel) {
   return 'E'
 }
 
+function channelLabelShort(ch: OutreachChannel) {
+  if (ch === 'whatsapp') return 'WhatsApp'
+  if (ch === 'instagram') return 'Instagram'
+  return 'Gmail'
+}
+
 export function InboxV2() {
   const { state, actions } = useWhatsAppStore()
   const [search, setSearch] = useState('')
@@ -516,11 +522,13 @@ function InboundMedia({ msg }: { msg: Message }) {
 function MessageBubble({
   msg,
   channel,
+  showChannelChip,
   onReact,
   onRemoveReaction,
 }: {
   msg: Message
   channel: OutreachChannel
+  showChannelChip?: boolean
   onReact: (msgId: string, emoji: string) => void
   onRemoveReaction: (msgId: string) => void
 }) {
@@ -530,6 +538,12 @@ function MessageBubble({
   return (
     <div className={`rx-msg-row ${msg.direction === 'outbound' ? 'out' : 'in'}`}>
       <div className="rx-msg-wrap">
+        {showChannelChip ? (
+          <div className={`rx-msg-channel-chip ${channel}`} aria-label={channelLabelShort(channel)}>
+            <span className="rx-msg-channel-dot" />
+            {channelLabelShort(channel)}
+          </div>
+        ) : null}
         {msg.subject ? (
           <div className="rx-text-xs rx-muted rx-mb-2">
             <strong>{msg.subject}</strong>
@@ -610,9 +624,57 @@ function Thread() {
   const { state, actions } = useWhatsAppStore()
   const conv = state.conversations.find((c) => c.id === state.selectedConversationId)!
   const inf = state.influencers.find((i) => i.id === conv.influencerId)
-  const messages = state.messages
-    .filter((m) => m.conversationId === conv.id)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+  // Sibling conversations — same influencer on other channels (WA / IG / Gmail).
+  const siblings = useMemo(
+    () => state.conversations.filter((c) => c.influencerId === conv.influencerId),
+    [state.conversations, conv.influencerId],
+  )
+  const availableChannels = useMemo(() => {
+    const set = new Set<OutreachChannel>()
+    for (const s of siblings) set.add(s.channel)
+    return Array.from(set)
+  }, [siblings])
+  const canUnify = availableChannels.length >= 2
+
+  // Unified toggle (per-thread, defaults to single so nothing breaks).
+  const [unified, setUnified] = useState(false)
+  useEffect(() => {
+    // Reset when switching to a thread that can't unify.
+    if (!canUnify && unified) setUnified(false)
+  }, [canUnify, unified])
+
+  // Which channel the composer will reply on (unified mode only).
+  const [replyChannel, setReplyChannel] = useState<OutreachChannel>(conv.channel)
+  useEffect(() => {
+    setReplyChannel(conv.channel)
+  }, [conv.channel, conv.id])
+
+  // Map from conversationId → channel for bubble decoration in unified view.
+  const convChannelById = useMemo(() => {
+    const map = new Map<string, OutreachChannel>()
+    for (const c of siblings) map.set(c.id, c.channel)
+    return map
+  }, [siblings])
+
+  const messages = useMemo(() => {
+    if (unified) {
+      const siblingIds = new Set(siblings.map((s) => s.id))
+      return state.messages
+        .filter((m) => siblingIds.has(m.conversationId))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    }
+    return state.messages
+      .filter((m) => m.conversationId === conv.id)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }, [state.messages, unified, siblings, conv.id])
+
+  // The conversation the composer is currently attached to.
+  const activeConv: Conversation = useMemo(() => {
+    if (!unified) return conv
+    return siblings.find((s) => s.channel === replyChannel) || conv
+  }, [unified, siblings, replyChannel, conv])
+
   const [draft, setDraft] = useState('')
   const [replying, setReplying] = useState(false)
   const [showEmoji, setShowEmoji] = useState(false)
@@ -621,15 +683,15 @@ function Thread() {
   const [labelInput, setLabelInput] = useState('')
   const attachRef = useRef<HTMLInputElement | null>(null)
 
-  const canReply = actions.canFreeformReply(conv.id)
-  const windowOpen = conv.channel === 'email' || actions.isWithin24hWindow(conv.id)
+  const canReply = actions.canFreeformReply(activeConv.id)
+  const windowOpen = activeConv.channel === 'email' || actions.isWithin24hWindow(activeConv.id)
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const el = bodyRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [conv.id, messages.length])
+  }, [conv.id, unified, messages.length])
 
   const send = async () => {
     const text = draft.trim()
@@ -637,15 +699,15 @@ function Thread() {
     setDraft('')
     setReplying(true)
     try {
-      if (conv.channel === 'whatsapp' && conv.isLive) {
-        const ok = await actions.sendWhatsAppReplyLive(conv.id, text)
+      if (activeConv.channel === 'whatsapp' && activeConv.isLive) {
+        const ok = await actions.sendWhatsAppReplyLive(activeConv.id, text)
         if (!ok) setDraft(text)
       } else {
-        const ok = actions.sendReply(conv.id, text)
+        const ok = actions.sendReply(activeConv.id, text)
         if (!ok) {
           setDraft(text)
           actions.toast(
-            conv.channel === 'email'
+            activeConv.channel === 'email'
               ? 'Could not send'
               : 'Reply window closed — send a template first',
             'error',
@@ -674,11 +736,11 @@ function Thread() {
   }
 
   const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
-  const canReact = !conv.isLive || conv.channel !== 'whatsapp'
+  const canReact = !activeConv.isLive || activeConv.channel !== 'whatsapp'
   const handle = inf?.handle?.startsWith('@') ? inf.handle : inf?.handle ? `@${inf.handle}` : ''
 
   return (
-    <div className="rx-thread" data-channel={conv.channel}>
+    <div className="rx-thread" data-channel={unified ? 'unified' : conv.channel}>
       <div className="rx-thread-head">
         <div className="rx-thread-head-left">
           <div className="rx-conv-avatar" style={{ width: 40, height: 40 }}>
@@ -693,13 +755,40 @@ function Thread() {
               {conv.isLive ? <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>LIVE</span> : null}
             </div>
             <div className="rx-text-xs rx-muted mono">
-              {conv.channel === 'whatsapp' ? inf?.phone
+              {unified
+                ? `${availableChannels.length} channels · ${availableChannels.map(channelLabelShort).join(' · ')}`
+                : conv.channel === 'whatsapp' ? inf?.phone
                 : conv.channel === 'instagram' ? (handle || 'no handle')
                 : inf?.email}
             </div>
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {canUnify && (
+            <div className="rx-seg sm" role="tablist" aria-label="Thread view mode" data-testid="unified-toggle">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!unified}
+                className={`rx-seg-btn${!unified ? ' is-active' : ''}`}
+                onClick={() => setUnified(false)}
+                data-testid="thread-mode-single"
+              >
+                Single
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={unified}
+                className={`rx-seg-btn${unified ? ' is-active' : ''}`}
+                onClick={() => setUnified(true)}
+                data-testid="thread-mode-unified"
+                title={`Merge ${availableChannels.map(channelLabelShort).join(' + ')}`}
+              >
+                Unified
+              </button>
+            </div>
+          )}
           {(conv.labels || []).map((l) => (
             <span key={l} className="rx-chip xs">
               <Tag size={9} /> {l}
@@ -766,46 +855,70 @@ function Thread() {
         </div>
       </div>
 
-      <div className="rx-thread-body" ref={bodyRef} data-channel={conv.channel}>
+      <div className="rx-thread-body" ref={bodyRef} data-channel={unified ? 'unified' : conv.channel}>
         {messages.length === 0 ? (
           <div style={{ margin: 'auto', color: 'var(--text-3)' }}>
             {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
           </div>
         ) : (
-          messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              msg={m}
-              channel={conv.channel}
-              onReact={(id, em) => {
-                if (!canReact) {
-                  actions.toast(
-                    'Reactions on live WhatsApp threads need proxy support — UI ready.',
-                    'info',
-                  )
-                  return
-                }
-                actions.reactToMessage(id, em, 'me')
-              }}
-              onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
-            />
-          ))
+          messages.map((m) => {
+            const msgChannel = unified
+              ? (convChannelById.get(m.conversationId) || conv.channel)
+              : conv.channel
+            return (
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                channel={msgChannel}
+                showChannelChip={unified}
+                onReact={(id, em) => {
+                  if (!canReact) {
+                    actions.toast(
+                      'Reactions on live WhatsApp threads need proxy support — UI ready.',
+                      'info',
+                    )
+                    return
+                  }
+                  actions.reactToMessage(id, em, 'me')
+                }}
+                onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
+              />
+            )
+          })
         )}
       </div>
 
-      <div className="rx-composer" data-channel={conv.channel}>
-        {conv.channel === 'whatsapp' && (
+      <div className="rx-composer" data-channel={activeConv.channel}>
+        {unified && canUnify && (
+          <div className="rx-composer-channel-row" data-testid="reply-channel-picker">
+            <span className="rx-text-xs rx-muted">Reply via</span>
+            <div className="rx-seg sm">
+              {availableChannels.map((ch) => (
+                <button
+                  key={ch}
+                  type="button"
+                  className={`rx-seg-btn${replyChannel === ch ? ' is-active' : ''}`}
+                  onClick={() => setReplyChannel(ch)}
+                  data-testid={`reply-channel-${ch}`}
+                >
+                  {channelLabelShort(ch)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {activeConv.channel === 'whatsapp' && (
           <div className={`rx-window-note ${windowOpen ? 'open' : 'closed'}`}>
             <span>
               {windowOpen
-                ? conv.isLive
+                ? activeConv.isLive
                   ? '● 24-hour reply window open · sending via WhatsApp Cloud API'
                   : '● 24-hour reply window open'
                 : '● Window closed — use a template'}
             </span>
           </div>
         )}
-        {conv.channel === 'instagram' && (
+        {activeConv.channel === 'instagram' && (
           <div className={`rx-window-note ig ${windowOpen ? 'open' : 'closed'}`}>
             <span>
               {windowOpen
@@ -842,7 +955,7 @@ function Thread() {
               onClick={() => attachRef.current?.click()}
               disabled={!canReply}
               title={
-                conv.channel === 'whatsapp' && conv.isLive
+                activeConv.channel === 'whatsapp' && activeConv.isLive
                   ? 'Media send is pending backend support — coming soon'
                   : 'Attach a file'
               }
@@ -858,13 +971,12 @@ function Thread() {
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (!file) return
-                if (conv.channel === 'whatsapp' && conv.isLive) {
+                if (activeConv.channel === 'whatsapp' && activeConv.isLive) {
                   actions.toast(
                     'WhatsApp media send requires proxy support — UI ready, endpoint pending',
                     'info',
                   )
                 } else {
-                  // Local mocked attach preview only
                   const url = URL.createObjectURL(file)
                   actions.toast(`Attached ${file.name} (mock preview)`, 'info')
                   window.open(url, '_blank', 'noopener')
@@ -912,7 +1024,13 @@ function Thread() {
           </div>
           <textarea
             className="rx-textarea"
-            placeholder={canReply ? 'Type a reply…' : 'Reply window closed'}
+            placeholder={
+              canReply
+                ? unified
+                  ? `Reply on ${channelLabelShort(activeConv.channel)}…`
+                  : 'Type a reply…'
+                : 'Reply window closed'
+            }
             rows={1}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -934,7 +1052,7 @@ function Thread() {
             <Send size={14} /> {replying ? 'Sending…' : 'Send'}
           </button>
         </div>
-        {!conv.isLive ? (
+        {!activeConv.isLive ? (
           <div className="rx-row" style={{ gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
             <span className="rx-text-xs rx-muted">Demo:</span>
             <button
@@ -942,7 +1060,7 @@ function Thread() {
               className="rx-btn ghost sm"
               onClick={() =>
                 actions.simulateInbound(
-                  conv.id,
+                  activeConv.id,
                   'Sure! Could you share your rates and the brief?',
                 )
               }
@@ -955,7 +1073,7 @@ function Thread() {
               className="rx-btn ghost sm"
               onClick={() =>
                 actions.simulateInbound(
-                  conv.id,
+                  activeConv.id,
                   'Just processed the invoice \u2014 payment received!',
                 )
               }
@@ -968,7 +1086,7 @@ function Thread() {
               className="rx-btn ghost sm"
               onClick={() =>
                 actions.simulateInbound(
-                  conv.id,
+                  activeConv.id,
                   'Yes, sounds great! Would love to know more.',
                 )
               }

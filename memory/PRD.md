@@ -197,3 +197,14 @@ Use **Save to GitHub** in the chat input when ready.
   - Deps added via `yarn add`: `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-link`, `@tiptap/extension-underline`, `@tiptap/extension-placeholder` (v3.29.2).
   - Verified via screenshot: modal switches to email cleanly, toolbar toggles bold/H1, preview renders HTML in real time; palette opens with `⌘K`, shows grouped nav + campaigns, empty state message rewritten.
   - Updated files: `src/components/RichTextEditor.tsx` (new), `src/components/CreateTemplateModal.tsx`, `src/components/CommandPalette.tsx`, `src/index.css`, `package.json`.
+
+- **2026-07-29 (unified influencer thread view)** — Cross-channel timeline for a single influencer:
+  - New "Single | Unified" segmented toggle in the Thread header. Only rendered when the selected influencer has ≥2 conversations across channels (WA / IG / Gmail) — otherwise hidden, so single-channel threads look exactly the same as before.
+  - Default is **Single**, non-breaking. Unified is opt-in per thread.
+  - When Unified is on: `Thread` merges messages from every sibling conversation (matched by `influencerId`), sorts by `createdAt`, and renders them with their **own** channel colouring — WA green bubbles, IG gradient, Gmail red border-accent — interleaved chronologically.
+  - Every message shows a small uppercase channel chip (`WHATSAPP` / `INSTAGRAM` / `GMAIL`) with a brand-coloured dot, aligned to the bubble side (right for outbound, left for inbound).
+  - Composer keeps a **Reply via** segmented control listing available channels; sending routes the reply to the correct sibling conversation and reuses the existing `sendReply` / `sendWhatsAppReplyLive` paths, including the WA 24h/live gating.
+  - New `.rx-thread[data-channel='unified']` styles: neutral surface with three soft radial glows (green / pink / blue) so unified view feels distinct without any single brand dominating.
+  - Verified end-to-end via seeded three-channel scenario: toggle appears, unified body shows all 6 messages with chips, changing reply channel to Gmail and sending appends the message to the Gmail conversation only.
+  - Updated files: `src/pages/InboxV2.tsx` (Thread + MessageBubble + `channelLabelShort` helper), `src/index.css`.
+
