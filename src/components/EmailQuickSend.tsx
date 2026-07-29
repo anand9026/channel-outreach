@@ -102,12 +102,19 @@ export function EmailQuickSend() {
 
   const activeSlots: string[] = mode === 'template' ? templateSlots : composeSlots
 
+  const gmailScope = useMemo(
+    () => ({
+      user_id: gmailAccount?.userId || undefined,
+    }),
+    [gmailAccount?.userId],
+  )
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       setTemplatesLoading(true)
       try {
-        const list = await listGmailTemplates()
+        const list = await listGmailTemplates(gmailScope)
         if (!cancelled) setTemplates(list)
       } catch {
         /* templates optional for compose mode */
@@ -119,7 +126,7 @@ export function EmailQuickSend() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [gmailScope])
 
   useEffect(() => {
     if (!selectedTemplate) return
@@ -246,6 +253,7 @@ export function EmailQuickSend() {
             to: r.email,
             template_name: templateName,
             variables: vars,
+            user_id: gmailAccount.userId,
           })
           messageId = typeof res?.id === 'string' ? res.id : undefined
         } else {
@@ -256,6 +264,7 @@ export function EmailQuickSend() {
             subject: renderedSubject,
             body: renderedBody,
             text_body: renderedBody,
+            user_id: gmailAccount.userId,
           })
           messageId = res?.id
         }

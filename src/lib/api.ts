@@ -148,12 +148,14 @@ export type GmailTemplate = {
 export type GmailThreadMeta = {
   thread_id: string
   to: string | null
+  from?: string | null
   subject: string | null
   snippet: string | null
   last_message_at: string
   message_count: number
   message_id?: string | null
   updated_at?: string
+  history_id?: string | null
 }
 
 export type GmailThreadMessage = {
@@ -483,8 +485,10 @@ export async function sendGmailMessage(input: {
 export async function listGmailThreads(input?: {
   user_id?: string
   channel_id?: string
+  limit?: number
 }) {
   const q = withGmailScopeParams(input)
+  if (input?.limit) q.set('limit', String(input.limit))
   const res = await request<ApiSuccess<{ threads?: GmailThreadMeta[] }>>(
     `/gmail-outreach/threads?${q.toString()}`,
   )

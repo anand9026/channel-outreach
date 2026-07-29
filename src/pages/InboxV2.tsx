@@ -160,6 +160,7 @@ export function InboxV2() {
           inf?.name.toLowerCase().includes(search.toLowerCase()) ||
           inf?.handle.toLowerCase().includes(search.toLowerCase()) ||
           inf?.phone.toLowerCase().includes(search.toLowerCase()) ||
+          (inf?.email || '').toLowerCase().includes(search.toLowerCase()) ||
           c.lastPreview?.toLowerCase().includes(search.toLowerCase()) ||
           (c.labels || []).some((l) => l.toLowerCase().includes(search.toLowerCase()))
         )
@@ -702,6 +703,9 @@ function Thread() {
       if (activeConv.channel === 'whatsapp' && activeConv.isLive) {
         const ok = await actions.sendWhatsAppReplyLive(activeConv.id, text)
         if (!ok) setDraft(text)
+      } else if (activeConv.channel === 'email' && activeConv.isLive) {
+        const ok = await actions.sendGmailReplyLive(activeConv.id, text)
+        if (!ok) setDraft(text)
       } else {
         const ok = actions.sendReply(activeConv.id, text)
         if (!ok) {
@@ -915,6 +919,15 @@ function Thread() {
                   ? '● 24-hour reply window open · sending via WhatsApp Cloud API'
                   : '● 24-hour reply window open'
                 : '● Window closed — use a template'}
+            </span>
+          </div>
+        )}
+        {activeConv.channel === 'email' && (
+          <div className={`rx-window-note open`}>
+            <span>
+              {activeConv.isLive
+                ? '● Live Gmail thread · replies send from your connected account'
+                : '● Email thread'}
             </span>
           </div>
         )}

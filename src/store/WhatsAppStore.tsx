@@ -33,13 +33,16 @@ import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variable
 import {
   ApiError,
   getGmailConnection,
+  getGmailThread,
   getWhatsAppConnection,
   getWhatsAppInboxMessages,
   listGmailThreads,
   listWhatsAppInbox,
+  sendGmailMessage,
   sendWhatsAppText,
   type ConnectionInfo,
   type GmailConnectionInfo,
+  type GmailThreadMessage,
   type GmailThreadMeta,
   type InboxMessage as ApiInboxMessage,
   type InboxThread as ApiInboxThread,
@@ -261,6 +264,14 @@ type Action =
   | { type: 'SET_LIVE_CONNECTION'; connection: ConnectionInfo | null }
   | { type: 'MERGE_INBOX_THREADS'; threads: ApiInboxThread[] }
   | { type: 'MERGE_GMAIL_THREADS'; threads: GmailThreadMeta[]; emailAccountId: string }
+  | {
+      type: 'MERGE_GMAIL_MESSAGES'
+      payload: {
+        conversationId: string
+        threadId: string
+        messages: GmailThreadMessage[]
+      }
+    }
   | {
       type: 'MERGE_INBOX_MESSAGES'
       payload: { phone: string; messages: ApiInboxMessage[]; phoneNumberId?: string }
@@ -561,7 +572,7 @@ function reducer(state: AppState, action: Action): AppState {
         whatsAppNumbers: [...state.whatsAppNumbers, number],
         connectModalOpen: false,
         connectStep: 0,
-        activeTab: 'floor',
+        activeTab: 'home',
       }
     }
     case 'CONNECT_EMAIL': {
@@ -584,7 +595,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         emailAccounts: nextAccounts,
         emailModalOpen: false,
-        activeTab: 'floor',
+        activeTab: 'home',
       }
     }
     case 'SYNC_GMAIL': {
@@ -623,7 +634,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         instagramAccounts: [...state.instagramAccounts, account],
         instagramModalOpen: false,
-        activeTab: 'floor',
+        activeTab: 'home',
       }
     }
     case 'REACT_TO_MESSAGE': {
@@ -1625,6 +1636,7 @@ function reducer(state: AppState, action: Action): AppState {
               lastPreview: preview,
               lastInboundAt: t.last_message_at,
               isLive: true,
+              gmailThreadId: t.thread_id,
             },
           ]
         } else {
@@ -1642,12 +1654,84 @@ function reducer(state: AppState, action: Action): AppState {
                       ? t.last_message_at
                       : c.lastInboundAt,
                   isLive: true,
+                  gmailThreadId: t.thread_id || c.gmailThreadId,
                 }
               : c,
           )
         }
       }
       return { ...state, influencers, conversations }
+    }
+    case 'MERGE_GMAIL_MESSAGES': {
+      const { conversationId, threadId, messages: apiMsgs } = action.payload
+      if (!apiMsgs || apiMsgs.length === 0) return state
+      const conv = state.conversations.find((c) => c.id === conversationId)
+      if (!conv) return state
+
+      const existingIds = new Set(
+        state.messages
+          .filter((m) => m.conversationId === conversationId)
+          .map((m) => m.metaMessageId)
+          .filter(Boolean),
+      )
+
+      const newMsgs: Message[] = []
+      for (const m of apiMsgs) {
+        const mid = m.id
+        if (!mid || existingIds.has(mid)) continue
+        const direction: Message['direction'] =
+          m.direction === 'outbound' ? 'outbound' : 'inbound'
+        newMsgs.push({
+          id: uid('msg'),
+          conversationId,
+          organizationId: ORG_ID,
+          channel: 'email',
+          direction,
+          subject: m.subject || undefined,
+          body: m.snippet || '(no content)',
+          status: direction === 'outbound' ? 'delivered' : 'delivered',
+          isTemplate: false,
+          createdAt: m.internal_date || nowIso(),
+          metaMessageId: mid,
+        })
+      }
+
+      if (newMsgs.length === 0) {
+        return {
+          ...state,
+          conversations: state.conversations.map((c) =>
+            c.id === conversationId
+              ? { ...c, gmailThreadId: threadId || c.gmailThreadId, isLive: true }
+              : c,
+          ),
+        }
+      }
+
+      const last = newMsgs[newMsgs.length - 1]
+      return {
+        ...state,
+        messages: [...state.messages, ...newMsgs].sort((a, b) =>
+          a.createdAt.localeCompare(b.createdAt),
+        ),
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId
+            ? {
+                ...c,
+                gmailThreadId: threadId || c.gmailThreadId,
+                isLive: true,
+                lastMessageAt: last.createdAt,
+                lastPreview: last.body.slice(0, 80),
+                lastInboundAt:
+                  last.direction === 'inbound' ? last.createdAt : c.lastInboundAt,
+                unreadCount:
+                  c.id === state.selectedConversationId
+                    ? 0
+                    : c.unreadCount +
+                      newMsgs.filter((m) => m.direction === 'inbound').length,
+              }
+            : c,
+        ),
+      }
     }
     case 'MERGE_INBOX_MESSAGES': {
       const { phone, messages: apiMsgs, phoneNumberId: hint } = action.payload
@@ -1957,6 +2041,7 @@ interface StoreContextValue {
     setLivePolling: (polling: boolean) => void
     syncLiveInboxNow: () => Promise<void>
     sendWhatsAppReplyLive: (conversationId: string, body: string) => Promise<boolean>
+    sendGmailReplyLive: (conversationId: string, body: string) => Promise<boolean>
     setTheme: (theme: 'light' | 'dark' | 'system') => void
     enableNotifications: () => Promise<boolean>
     disableNotifications: () => void
@@ -2186,19 +2271,48 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     }
 
     // Gmail polling — only runs if a Gmail account is connected with a userId.
-    const cur = stateRef.current
-    const em = cur.emailAccounts.find(
+    const curAfter = stateRef.current
+    const em = curAfter.emailAccounts.find(
       (a) => a.provider === 'gmail' && a.userId,
     )
     if (em && em.userId) {
       try {
-        const res = await listGmailThreads({ user_id: em.userId })
+        const res = await listGmailThreads({ user_id: em.userId, limit: 40 })
         if (res && res.length > 0) {
           dispatch({
             type: 'MERGE_GMAIL_THREADS',
             threads: res,
             emailAccountId: em.id,
           })
+        }
+
+        const selEmail = stateRef.current.conversations.find(
+          (c) => c.id === stateRef.current.selectedConversationId,
+        )
+        if (
+          selEmail &&
+          selEmail.channel === 'email' &&
+          selEmail.isLive &&
+          selEmail.gmailThreadId
+        ) {
+          try {
+            const thread = await getGmailThread({
+              thread_id: selEmail.gmailThreadId,
+              user_id: em.userId,
+            })
+            if (thread?.messages?.length) {
+              dispatch({
+                type: 'MERGE_GMAIL_MESSAGES',
+                payload: {
+                  conversationId: selEmail.id,
+                  threadId: thread.thread_id,
+                  messages: thread.messages,
+                },
+              })
+            }
+          } catch {
+            /* per-thread errors are non-fatal */
+          }
         }
       } catch {
         /* Gmail sync errors are non-fatal for the WA live indicator */
@@ -2250,6 +2364,76 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       }
     },
     [canFreeformReply, doLiveSync],
+  )
+
+  const sendGmailReplyLive = useCallback(
+    async (conversationId: string, body: string) => {
+      const conv = stateRef.current.conversations.find(
+        (c) => c.id === conversationId,
+      )
+      if (!conv || conv.channel !== 'email') return false
+      const em = stateRef.current.emailAccounts.find(
+        (a) => a.id === conv.emailAccountId || a.provider === 'gmail',
+      )
+      const inf = stateRef.current.influencers.find(
+        (i) => i.id === conv.influencerId,
+      )
+      const to = (inf?.email || '').trim()
+      if (!em?.userId || !to) {
+        dispatch({
+          type: 'ADD_TOAST',
+          toast: {
+            message: !em?.userId
+              ? 'Reconnect Gmail to send live replies'
+              : 'No recipient email on this thread',
+            variant: 'error',
+          },
+        })
+        return false
+      }
+
+      const prior = stateRef.current.messages
+        .filter((m) => m.conversationId === conversationId && m.subject)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      const subject = prior?.subject
+        ? prior.subject.toLowerCase().startsWith('re:')
+          ? prior.subject
+          : `Re: ${prior.subject}`
+        : 'Re: your message'
+
+      const msgId = uid('msg')
+      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId })
+      try {
+        await sendGmailMessage({
+          to,
+          subject,
+          body,
+          text_body: body,
+          thread_id: conv.gmailThreadId,
+          user_id: em.userId,
+        })
+        void doLiveSync()
+        return true
+      } catch (e) {
+        dispatch({
+          type: 'ADVANCE_MESSAGE_STATUS',
+          messageId: msgId,
+          status: 'failed',
+        })
+        dispatch({
+          type: 'ADD_TOAST',
+          toast: {
+            message:
+              e instanceof ApiError
+                ? `Gmail: ${e.message}`
+                : 'Gmail send failed',
+            variant: 'error',
+          },
+        })
+        return false
+      }
+    },
+    [doLiveSync],
   )
 
   // Fetch connection info once on mount so the WA status pill lights up.
@@ -2619,6 +2803,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       setLivePolling: (polling) => dispatch({ type: 'SET_LIVE_POLLING', polling }),
       syncLiveInboxNow: () => doLiveSync(),
       sendWhatsAppReplyLive,
+      sendGmailReplyLive,
       setTheme: (theme) => dispatch({ type: 'SET_THEME', theme }),
       enableNotifications: async () => {
         if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -2667,6 +2852,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       state.channels,
       doLiveSync,
       sendWhatsAppReplyLive,
+      sendGmailReplyLive,
     ],
   )
 

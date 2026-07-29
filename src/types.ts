@@ -238,8 +238,10 @@ export interface Conversation {
   lastMessageAt: string
   unreadCount: number
   lastPreview?: string
-  /** True when this thread is sourced from the live WhatsApp Cloud API */
+  /** True when this thread is sourced from a live channel API */
   isLive?: boolean
+  /** Gmail thread id for live email conversations */
+  gmailThreadId?: string
   /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */
   labels?: string[]
 }
