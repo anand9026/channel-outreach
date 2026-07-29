@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
+import { EmailQuickSend } from '../components/EmailQuickSend'
 import { PageHeader } from '../components/PageHeader'
 import {
   ApiError,
@@ -244,7 +245,94 @@ export function QuickSendPage() {
   const { state, actions } = useWhatsAppStore()
   const mode = connectionMode(state)
   const waNumbers = state.whatsAppNumbers
+  const hasEmail = state.emailAccounts.some((a) => a.provider === 'gmail')
+  const hasWhatsApp = waNumbers.length > 0
+  const [channel, setChannel] = useState<'whatsapp' | 'email'>(
+    hasWhatsApp ? 'whatsapp' : hasEmail ? 'email' : 'whatsapp',
+  )
   const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string>('')
+
+  useEffect(() => {
+    if (channel === 'whatsapp' && !hasWhatsApp && hasEmail) setChannel('email')
+    if (channel === 'email' && !hasEmail && hasWhatsApp) setChannel('whatsapp')
+  }, [channel, hasWhatsApp, hasEmail])
+
+  if (mode === 'none') {
+    return (
+      <div className="rx-page">
+        <PageHeader
+          title="Quick Send"
+          subtitle="Send WhatsApp templates or email anyone — no campaign required."
+        />
+        <EmptyState
+          icon={<Zap size={20} />}
+          title="Connect a channel to send"
+          body="Connect WhatsApp for Meta templates, or Gmail to email any address."
+          primaryAction={
+            <button
+              type="button"
+              className="rx-btn primary"
+              onClick={() => actions.setTab('connect')}
+            >
+              Connect channels
+            </button>
+          }
+        />
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="rx-page" style={{ paddingBottom: 0 }}>
+        <div className="rx-channel-switch rx-mb-4">
+          <div className="rx-seg" data-testid="quicksend-channel">
+            <button
+              type="button"
+              className={`rx-seg-btn${channel === 'whatsapp' ? ' is-active' : ''}`}
+              disabled={!hasWhatsApp}
+              onClick={() => setChannel('whatsapp')}
+              title={hasWhatsApp ? undefined : 'Connect WhatsApp first'}
+            >
+              WhatsApp
+            </button>
+            <button
+              type="button"
+              className={`rx-seg-btn${channel === 'email' ? ' is-active' : ''}`}
+              disabled={!hasEmail}
+              onClick={() => setChannel('email')}
+              title={hasEmail ? undefined : 'Connect Gmail first'}
+            >
+              Email
+            </button>
+          </div>
+          {!hasEmail ? (
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              onClick={() => actions.setTab('connect')}
+            >
+              Connect Gmail
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {channel === 'email' ? <EmailQuickSend /> : <QuickSendWhatsApp selectedPhoneNumberId={selectedPhoneNumberId} setSelectedPhoneNumberId={setSelectedPhoneNumberId} />}
+    </>
+  )
+}
+
+/** Existing WhatsApp Quick Send body — kept intact; parent owns channel switch. */
+function QuickSendWhatsApp({
+  selectedPhoneNumberId,
+  setSelectedPhoneNumberId,
+}: {
+  selectedPhoneNumberId: string
+  setSelectedPhoneNumberId: (id: string) => void
+}) {
+  const { state, actions } = useWhatsAppStore()
+  const mode = connectionMode(state)
+  const waNumbers = state.whatsAppNumbers
 
   // Templates
   const [templates, setTemplates] = useState<MetaTemplate[]>([])
@@ -782,17 +870,22 @@ export function QuickSendPage() {
   const previewRecipient = recipients.find((r) => r.row) ?? recipients[0]
   const previewText = renderBody(bodyText, bindings, previewRecipient?.row)
 
-  if (mode === 'none') {
+  if (!waNumbers.length) {
     return (
       <div className="rx-page">
-        <PageHeader
-          title="Quick Send"
-          subtitle="Send a WhatsApp template to any phone number — no campaign required."
-        />
         <EmptyState
           icon={<Zap size={20} />}
-          title="Connect WhatsApp to use Quick Send"
-          body="This sandbox uses the real WhatsApp Cloud API. Connect a WABA number first."
+          title="Connect WhatsApp to send templates"
+          body="This flow uses the real WhatsApp Cloud API. Connect a WABA number on Channels, or switch to Email."
+          primaryAction={
+            <button
+              type="button"
+              className="rx-btn primary"
+              onClick={() => actions.setTab('connect')}
+            >
+              Connect WhatsApp
+            </button>
+          }
         />
       </div>
     )

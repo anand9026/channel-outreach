@@ -25,7 +25,7 @@ export interface CascadeOptions {
   stopOnReply: boolean
 }
 export type PhoneQuality = 'GREEN' | 'YELLOW' | 'RED'
-export type EmailProvider = 'sendgrid' | 'ses' | 'smtp'
+export type EmailProvider = 'gmail' | 'sendgrid' | 'ses' | 'smtp'
 export type TabId = 'floor' | 'connect' | 'templates' | 'campaigns' | 'inbox' | 'analytics' | 'quicksend'
 
 /** Resolved at send-time from org / brand / campaign / influencer — not free-typed per send. */

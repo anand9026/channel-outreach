@@ -1,4 +1,4 @@
-import { BarChart3, Inbox, LayoutTemplate, Send, Settings, Zap } from 'lucide-react'
+import { BarChart3, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { TabId } from '../types'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
@@ -26,16 +26,16 @@ export function Layout({ children }: { children: ReactNode }) {
   const pendingTemplates = state.templates.filter((t) => t.status === 'PENDING').length
   const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // Redirect legacy 'connect' / 'floor' tab values to 'campaigns'
+  // Redirect legacy 'floor' tab values to 'campaigns'
   useEffect(() => {
-    if (state.activeTab === 'connect' || state.activeTab === 'floor') {
+    if (state.activeTab === 'floor') {
       actions.setTab('campaigns')
     }
   }, [state.activeTab, actions])
 
   const showOnboarding = mode === 'none'
-  const activeTab =
-    state.activeTab === 'floor' || state.activeTab === 'connect' ? 'campaigns' : state.activeTab
+  const activeTab = state.activeTab === 'floor' ? 'campaigns' : state.activeTab
+  const emailConnected = state.emailAccounts.length > 0
 
   return (
     <div className="rx-shell">
@@ -71,6 +71,15 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="rx-sidebar-footer">
+          <button
+            type="button"
+            className="rx-settings-btn"
+            onClick={() => actions.setTab('connect')}
+            data-testid="open-connect"
+          >
+            <UserPlus size={16} />
+            <span>Connect channels</span>
+          </button>
           <div className="rx-conn-status">
             <span
               className={`rx-dot${state.whatsAppNumbers.length ? ' is-live-wa' : ''}`}
@@ -87,10 +96,10 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
           <div className="rx-conn-status">
             <span
-              className={`rx-dot${state.emailAccounts.length ? ' is-live-email' : ''}`}
+              className={`rx-dot${emailConnected ? ' is-live-email' : ''}`}
               aria-hidden
             />
-            Email {state.emailAccounts.length ? 'live' : 'not connected'}
+            Email {emailConnected ? 'live' : 'not connected'}
           </div>
           <button
             type="button"

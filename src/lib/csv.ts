@@ -87,3 +87,35 @@ export function parsePhoneList(text: string): string[] {
     .filter((p) => p.length >= 10)
   return [...new Set(parts)]
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i
+
+export function normalizeEmail(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+}
+
+export function isValidEmail(raw: string): boolean {
+  return EMAIL_RE.test(normalizeEmail(raw))
+}
+
+export function findEmailColumn(headers: string[]): string | null {
+  const keys = ['email', 'e-mail', 'mail', 'email_address', 'emailaddress']
+  const lower = headers.map((h) => h.toLowerCase())
+  for (const k of keys) {
+    const idx = lower.indexOf(k)
+    if (idx >= 0) return headers[idx]
+  }
+  // Prefer a column that looks like emails in the name
+  const fuzzy = headers.find((h) => /email|mail/i.test(h))
+  return fuzzy ?? headers[0] ?? null
+}
+
+export function parseEmailList(text: string): string[] {
+  const parts = text
+    .split(/[\n,;]+/)
+    .map((p) => normalizeEmail(p))
+    .filter((p) => isValidEmail(p))
+  return [...new Set(parts)]
+}

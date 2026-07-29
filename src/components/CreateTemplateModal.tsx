@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { ApiError, createWhatsAppTemplate } from '../lib/api'
+import { ApiError, createGmailTemplate, createWhatsAppTemplate } from '../lib/api'
 import { extractMetaSlots } from '../lib/templateSlots'
 import { toMetaBody, toMetaTemplateName } from '../lib/metaTemplate'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
@@ -283,23 +283,43 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
       return
     }
 
-    // Email path — unchanged behavior
+    // Email path — persist via Gmail outreach API
     if (!subject.trim()) {
       actions.toast('Email subject is required', 'error')
       return
     }
-    actions.submitTemplate({
-      channel: 'email',
-      name: name.trim(),
-      category,
-      subject: subject.trim(),
-      body: body.trim(),
-      bindings: [],
-      brandId: null,
-    })
-    reset()
-    onCreated?.()
-    onClose()
+    setSubmitting(true)
+    try {
+      await createGmailTemplate({
+        template_name: name.trim(),
+        subject_template: subject.trim(),
+        html_template: body.trim(),
+      })
+      actions.submitTemplate({
+        channel: 'email',
+        name: name.trim(),
+        category,
+        subject: subject.trim(),
+        body: body.trim(),
+        bindings: [],
+        brandId: null,
+      })
+      actions.toast(`Saved Gmail template ${name.trim()}`, 'success')
+      reset()
+      onCreated?.()
+      onClose()
+    } catch (err) {
+      actions.toast(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Create failed',
+        'error',
+      )
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (

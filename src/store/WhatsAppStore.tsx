@@ -32,11 +32,13 @@ import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
 import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
 import {
   ApiError,
+  getGmailConnection,
   getWhatsAppConnection,
   getWhatsAppInboxMessages,
   listWhatsAppInbox,
   sendWhatsAppText,
   type ConnectionInfo,
+  type GmailConnectionInfo,
   type InboxMessage as ApiInboxMessage,
   type InboxThread as ApiInboxThread,
 } from '../lib/api'
@@ -153,6 +155,14 @@ type Action =
         fromEmail: string
         provider: EmailProvider
         domain: string
+      }
+    }
+  | {
+      type: 'SYNC_GMAIL'
+      payload: {
+        connected: boolean
+        emailAddress?: string | null
+        channelId?: string | null
       }
     }
   | {
@@ -557,11 +567,38 @@ function reducer(state: AppState, action: Action): AppState {
         verified: true,
         connectedAt: nowIso(),
       }
+      // Gmail is a single connected mailbox — replace any previous Gmail entry.
+      const nextAccounts =
+        account.provider === 'gmail'
+          ? [...state.emailAccounts.filter((a) => a.provider !== 'gmail'), account]
+          : [...state.emailAccounts, account]
       return {
         ...state,
-        emailAccounts: [...state.emailAccounts, account],
+        emailAccounts: nextAccounts,
         emailModalOpen: false,
         activeTab: 'floor',
+      }
+    }
+    case 'SYNC_GMAIL': {
+      const others = state.emailAccounts.filter((a) => a.provider !== 'gmail')
+      if (!action.payload.connected || !action.payload.emailAddress) {
+        return { ...state, emailAccounts: others }
+      }
+      const email = action.payload.emailAddress
+      const existing = state.emailAccounts.find((a) => a.provider === 'gmail')
+      const account: EmailAccount = {
+        id: existing?.id || uid('em'),
+        organizationId: ORG_ID,
+        fromName: existing?.fromName || email.split('@')[0] || 'Gmail',
+        fromEmail: email,
+        provider: 'gmail',
+        domain: email.split('@')[1] || 'gmail.com',
+        verified: true,
+        connectedAt: existing?.connectedAt || nowIso(),
+      }
+      return {
+        ...state,
+        emailAccounts: [...others, account],
       }
     }
     case 'CONNECT_INSTAGRAM': {
@@ -1755,6 +1792,7 @@ interface StoreContextValue {
       provider: EmailProvider
       domain: string
     }) => void
+    syncGmail: (info: GmailConnectionInfo | null) => void
     connectInstagram: (data: {
       handle: string
       displayName: string
@@ -2127,6 +2165,71 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Keep Gmail OAuth state in sync with emailAccounts so connectionMode,
+  // onboarding, and send gating all see the same source of truth.
+  useEffect(() => {
+    let cancelled = false
+    const params = new URLSearchParams(window.location.search)
+    const gmailStatus = params.get('gmail')
+    const tabHint = params.get('tab')
+
+    const clearGmailParams = () => {
+      const nextUrl = new URL(window.location.href)
+      nextUrl.searchParams.delete('gmail')
+      nextUrl.searchParams.delete('email')
+      nextUrl.searchParams.delete('message')
+      nextUrl.searchParams.delete('tab')
+      window.history.replaceState({}, '', nextUrl)
+    }
+
+    const load = async () => {
+      try {
+        const info = await getGmailConnection()
+        if (cancelled) return
+        dispatch({
+          type: 'SYNC_GMAIL',
+          payload: {
+            connected: Boolean(info?.connected && info.email_address),
+            emailAddress: info?.email_address,
+            channelId: info?.channel_id,
+          },
+        })
+        if (gmailStatus === 'connected') {
+          dispatch({
+            type: 'ADD_TOAST',
+            toast: {
+              message: info?.email_address
+                ? `Gmail connected · ${info.email_address}`
+                : 'Gmail connected',
+              variant: 'success',
+            },
+          })
+          if (tabHint === 'connect') {
+            dispatch({ type: 'SET_TAB', tab: 'connect' })
+          }
+        } else if (gmailStatus === 'error') {
+          dispatch({
+            type: 'ADD_TOAST',
+            toast: {
+              message: params.get('message') || 'Gmail connection failed',
+              variant: 'error',
+            },
+          })
+          dispatch({ type: 'SET_TAB', tab: 'connect' })
+        }
+      } catch {
+        /* API unreachable — leave emailAccounts as-is */
+      } finally {
+        if (gmailStatus) clearGmailParams()
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 15-second live polling loop for the WhatsApp inbox.
   useEffect(() => {
     if (!state.liveInbox.polling) return
@@ -2307,7 +2410,22 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       },
       connectEmail: (data) => {
         dispatch({ type: 'CONNECT_EMAIL', payload: data })
-        toast('Email sending domain connected', 'success')
+        toast(
+          data.provider === 'gmail'
+            ? `Gmail connected · ${data.fromEmail}`
+            : 'Email sending domain connected',
+          'success',
+        )
+      },
+      syncGmail: (info) => {
+        dispatch({
+          type: 'SYNC_GMAIL',
+          payload: {
+            connected: Boolean(info?.connected && info.email_address),
+            emailAddress: info?.email_address,
+            channelId: info?.channel_id,
+          },
+        })
       },
       connectInstagram: (data) => {
         dispatch({ type: 'CONNECT_INSTAGRAM', payload: data })

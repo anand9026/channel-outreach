@@ -12,10 +12,14 @@ import {
   DeliveryStatusBadge,
 } from '../components/StatusBadge'
 import {
+  getGmailThread,
   getWhatsAppInboxMessages,
+  listGmailThreads,
   listWhatsAppInbox,
   sendWhatsAppText,
   whatsappMediaUrl,
+  type GmailThreadMessage,
+  type GmailThreadMeta,
   type InboxMessage,
   type InboxThread,
 } from '../lib/api'
@@ -63,8 +67,12 @@ export function InboxPage() {
   const [liveThreads, setLiveThreads] = useState<InboxThread[]>([])
   const [liveMessages, setLiveMessages] = useState<InboxMessage[]>([])
   const [liveSelectedPhone, setLiveSelectedPhone] = useState<string | null>(null)
+  const [gmailThreads, setGmailThreads] = useState<GmailThreadMeta[]>([])
+  const [gmailMessages, setGmailMessages] = useState<GmailThreadMessage[]>([])
+  const [gmailSelectedThreadId, setGmailSelectedThreadId] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [liveError, setLiveError] = useState<string | null>(null)
+  const [gmailError, setGmailError] = useState<string | null>(null)
 
   const refreshLiveThreads = useCallback(async () => {
     try {
@@ -85,6 +93,25 @@ export function InboxPage() {
     }
   }, [])
 
+  const refreshGmailThreads = useCallback(async () => {
+    try {
+      const threads = await listGmailThreads()
+      setGmailThreads(threads)
+      setGmailError(null)
+    } catch (e) {
+      setGmailError(e instanceof Error ? e.message : 'Failed to load Gmail threads')
+    }
+  }, [])
+
+  const refreshGmailThread = useCallback(async (threadId: string) => {
+    try {
+      const data = await getGmailThread({ thread_id: threadId })
+      setGmailMessages(data?.messages || [])
+    } catch {
+      // keep previous messages on transient errors
+    }
+  }, [])
+
   useEffect(() => {
     void refreshLiveThreads()
     const id = window.setInterval(() => {
@@ -92,6 +119,14 @@ export function InboxPage() {
     }, 4000)
     return () => window.clearInterval(id)
   }, [refreshLiveThreads])
+
+  useEffect(() => {
+    void refreshGmailThreads()
+    const id = window.setInterval(() => {
+      void refreshGmailThreads()
+    }, 7000)
+    return () => window.clearInterval(id)
+  }, [refreshGmailThreads])
 
   useEffect(() => {
     if (!liveSelectedPhone) {
@@ -105,6 +140,18 @@ export function InboxPage() {
     return () => window.clearInterval(id)
   }, [liveSelectedPhone, refreshLiveMessages])
 
+  useEffect(() => {
+    if (!gmailSelectedThreadId) {
+      setGmailMessages([])
+      return
+    }
+    void refreshGmailThread(gmailSelectedThreadId)
+    const id = window.setInterval(() => {
+      void refreshGmailThread(gmailSelectedThreadId)
+    }, 5000)
+    return () => window.clearInterval(id)
+  }, [gmailSelectedThreadId, refreshGmailThread])
+
   const selectedId = state.selectedConversationId
   const selectedLocal = state.conversations.find((c) => c.id === selectedId)
   const selectedLive = liveSelectedPhone
@@ -117,6 +164,9 @@ export function InboxPage() {
         last_inbound_at: null,
         unread_count: 0,
       }
+    : null
+  const selectedGmailThread = gmailSelectedThreadId
+    ? gmailThreads.find((t) => t.thread_id === gmailSelectedThreadId) || null
     : null
 
   const sortedLocal = useMemo(() => {
@@ -254,6 +304,7 @@ export function InboxPage() {
 
   const hasAnyThread =
     (showLiveWhatsApp && filteredLive.length > 0) ||
+    (showLocalEmail && gmailThreads.length > 0) ||
     (showLocalEmail && localEmailOnly.length > 0) ||
     (!showLiveWhatsApp && sortedLocal.length > 0)
 
@@ -268,6 +319,7 @@ export function InboxPage() {
             <code>api.dev.getreelax.com/whatsapp-outreach/webhook</code>.
           </p>
           {liveError ? <p className="muted-xs" style={{ color: 'var(--danger, #b91c1c)' }}>{liveError}</p> : null}
+          {gmailError ? <p className="muted-xs" style={{ color: 'var(--danger, #b91c1c)' }}>{gmailError}</p> : null}
         </div>
 
         <label className="search-field">
@@ -321,6 +373,7 @@ export function InboxPage() {
                       className={`conv-item${liveSelectedPhone === t.phone ? ' active' : ''}`}
                       onClick={() => {
                         setLiveSelectedPhone(t.phone)
+                        setGmailSelectedThreadId(null)
                         actions.selectConversation(null)
                         setHighlightCampaign('all')
                       }}
@@ -344,7 +397,34 @@ export function InboxPage() {
                 ))
               : null}
 
-            {(showLocalEmail ? localEmailOnly : []).map((c) => {
+            {showLocalEmail && gmailThreads.length > 0
+              ? gmailThreads.map((t) => (
+                  <li key={`gmail_${t.thread_id}`}>
+                    <button
+                      type="button"
+                      className={`conv-item${
+                        !liveSelectedPhone && gmailSelectedThreadId === t.thread_id ? ' active' : ''
+                      }`}
+                      onClick={() => {
+                        setLiveSelectedPhone(null)
+                        actions.selectConversation(null)
+                        setGmailSelectedThreadId(t.thread_id)
+                        setHighlightCampaign('all')
+                      }}
+                    >
+                      <div className="conv-head">
+                        <strong>{t.subject || t.to || t.thread_id}</strong>
+                      </div>
+                      <div className="conv-meta-row">
+                        <ChannelBadge channel="email" />
+                        <span className="muted-xs">{t.to || 'recipient unavailable'}</span>
+                      </div>
+                      {t.snippet ? <p className="conv-preview">{t.snippet}</p> : null}
+                      <ConversationStatusBadge status="open" />
+                    </button>
+                  </li>
+                ))
+              : (showLocalEmail ? localEmailOnly : []).map((c) => {
                 const inf = actions.getConversationInfluencer(c)
                 const camps = c.campaignIds
                   .map((id) => state.campaigns.find((x) => x.id === id)?.name)
@@ -358,6 +438,7 @@ export function InboxPage() {
                       }`}
                       onClick={() => {
                         setLiveSelectedPhone(null)
+                        setGmailSelectedThreadId(null)
                         actions.selectConversation(c.id)
                         setHighlightCampaign('all')
                       }}
@@ -397,7 +478,7 @@ export function InboxPage() {
       </aside>
 
       <section className="inbox-thread card">
-        {!selectedLive && !selectedLocal ? (
+        {!selectedLive && !selectedLocal && !selectedGmailThread ? (
           <div className="empty-panel">
             <p>Select a conversation</p>
             <p className="muted-xs">
@@ -508,6 +589,61 @@ export function InboxPage() {
                   disabled={!canReply || sending}
                   onClick={() => void sendReply()}
                 >
+                  Send
+                </button>
+              </div>
+            </div>
+          </>
+        ) : selectedGmailThread ? (
+          <>
+            <div className="thread-header">
+              <div>
+                <h3>
+                  {selectedGmailThread.subject || 'Email thread'}{' '}
+                  <ChannelBadge channel="email" />
+                </h3>
+                <p className="muted-xs">
+                  {selectedGmailThread.to || 'recipient unavailable'}
+                  {' · '}
+                  live thread from server
+                </p>
+              </div>
+            </div>
+
+            <div className="window-banner open email">
+              <Clock size={16} />
+              Replies are synced from Gmail thread API
+            </div>
+
+            <div className="message-thread">
+              {gmailMessages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`msg-row ${m.direction === 'outbound' ? 'out' : 'in'}`}
+                >
+                  <div className="msg-bubble email">
+                    {m.subject ? <p className="msg-subject">{m.subject}</p> : null}
+                    <p className="msg-body-pre">{m.snippet}</p>
+                    <div className="msg-meta">
+                      <span>{new Date(m.internal_date).toLocaleTimeString()}</span>
+                      <span className="muted-xs">
+                        {m.direction === 'outbound' ? 'sent' : m.direction === 'inbound' ? 'reply' : 'message'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="composer">
+              <div className="composer-row">
+                <input
+                  value={reply}
+                  onChange={(e) => setReply(e.target.value)}
+                  placeholder="Reply from connected Gmail mailbox (UI is read-only for this MVP)"
+                  disabled
+                />
+                <button type="button" className="btn primary email" disabled>
                   Send
                 </button>
               </div>

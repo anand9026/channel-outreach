@@ -1,6 +1,7 @@
 import { CheckCircle2, Mail, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
 import { IgIcon } from './BrandIcons'
+import { ApiError, getGmailConnectUrl } from '../lib/api'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { Drawer } from './Drawer'
 
@@ -46,8 +47,8 @@ export function OnboardingSheet() {
           <ConnectCard
             channel="email"
             icon={<Mail size={22} />}
-            title="Email"
-            body="Send from your verified sending domain (SendGrid / SES / SMTP). Free-form messages, no approval needed."
+            title="Gmail"
+            body="Send from your Google account to any email. Compose freeform or use templates — replies land in Inbox."
             connected={state.emailAccounts.length > 0}
             onConnect={() => setEmailDrawer(true)}
           />
@@ -272,51 +273,71 @@ export function WaConnectDrawer({ open, onClose }: { open: boolean; onClose: () 
 
 export function EmailConnectDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { actions } = useWhatsAppStore()
-  const [fromName, setFromName] = useState('Nova Beauty')
-  const [fromEmail, setFromEmail] = useState('creators@glowlab.co')
-  const [domain, setDomain] = useState('glowlab.co')
+  const [connecting, setConnecting] = useState(false)
 
-  const finish = () => {
-    actions.connectEmail({ fromName, fromEmail, provider: 'sendgrid', domain })
-    onClose()
+  const startGoogle = async () => {
+    setConnecting(true)
+    try {
+      const data = await getGmailConnectUrl()
+      if (!data?.oauth_url) {
+        actions.toast('OAuth URL missing from API response', 'error')
+        setConnecting(false)
+        return
+      }
+      window.sessionStorage.setItem('rx-gmail-connecting', '1')
+      window.location.href = data.oauth_url
+    } catch (err) {
+      actions.toast(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to start Gmail OAuth',
+        'error',
+      )
+      setConnecting(false)
+    }
   }
 
   return (
     <Drawer
       open={open}
       onClose={onClose}
-      title="Connect Email"
-      subtitle="Add your verified sending domain"
+      title="Connect Gmail"
+      subtitle="Send email to anyone from your Google account"
       size="md"
       footer={
         <>
-          <button type="button" className="rx-btn ghost" onClick={onClose}>
+          <button type="button" className="rx-btn ghost" onClick={onClose} disabled={connecting}>
             Cancel
           </button>
           <button
             type="button"
             className="rx-btn primary"
-            onClick={finish}
+            onClick={() => void startGoogle()}
+            disabled={connecting}
             data-testid="email-finish"
           >
-            Verify &amp; connect
+            {connecting ? 'Redirecting to Google…' : 'Continue with Google'}
           </button>
         </>
       }
     >
       <div className="rx-col rx-gap">
-        <div className="rx-field">
-          <label className="rx-label">From name</label>
-          <input className="rx-input" value={fromName} onChange={(e) => setFromName(e.target.value)} />
+        <div className="rx-card compact">
+          <div className="rx-card-title">What you get</div>
+          <ul className="rx-checklist">
+            <li>Send to any email address — paste a list or upload CSV</li>
+            <li>Compose freeform or reuse saved templates</li>
+            <li>Replies appear in the same Inbox as WhatsApp</li>
+          </ul>
         </div>
-        <div className="rx-field">
-          <label className="rx-label">From email</label>
-          <input className="rx-input" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} />
-        </div>
-        <div className="rx-field">
-          <label className="rx-label">Domain</label>
-          <input className="rx-input" value={domain} onChange={(e) => setDomain(e.target.value)} />
-          <div className="rx-help">SPF + DKIM must be set on the domain. We verify via SendGrid.</div>
+        <div className="rx-card compact" style={{ background: 'var(--surface-2)' }}>
+          <div className="rx-card-title">Permissions</div>
+          <div className="rx-card-sub">
+            Google will ask for send and read access so Reelax can deliver outreach and surface
+            replies. You can disconnect anytime from Channels.
+          </div>
         </div>
       </div>
     </Drawer>
