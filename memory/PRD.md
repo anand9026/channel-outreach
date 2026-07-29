@@ -124,6 +124,22 @@ Use **Save to GitHub** in the chat input when ready.
   - Fixed lucide-react's removed brand icons by shipping tiny inline SVG `IgIcon` / `WaIcon` in `BrandIcons.tsx`.
 - **2026-07-25 (auto-triage)** — Auto-label rules:
   - `state.autoLabelRules` slice with 3 seeded rules (Hot lead signals / Payment received / Soft pass).
+  - Reducer actions `UPSERT_RULE` / `DELETE_RULE` / `TOGGLE_RULE`; provider effect watches new inbound messages and applies matching labels with a toast on match.
+  - Settings drawer UI to add / edit / delete / toggle rules with pill switch.
+  - Inbox composer exposes Sim hot lead / Sim paid / Sim neutral demo buttons.
+
+- **2026-07-29 (upstream merge)** — Fetched `origin/main` from `github.com/anand9026/channel-outreach`, brought in `Improve channel UX and enable Gmail send to anyone` and predecessor commits. Merged cleanly with no conflicts (fork's InboxV2.tsx / TemplatesLib.tsx co-existed with upstream's InboxPage.tsx / TemplatesPage.tsx; deleted the now-unused upstream duplicates). New upstream assets that landed:
+  - **Full Gmail API** in `src/lib/api.ts`: `getGmailConnectUrl`, `getGmailConnection`, `createGmailTemplate`, `listGmailTemplates`, `getGmailTemplate`, `sendGmailTemplate`, `sendGmailMessage`, `listGmailThreads`, `getGmailThread` + types `GmailConnectionInfo` / `GmailTemplate` / `GmailThreadMeta` / `GmailThreadMessage`.
+  - **`EmailQuickSend.tsx`** (623 lines) — real Gmail send with compose + CSV bulk flow.
+  - **`ConnectPage.tsx`** — restyled full-page Connect flow using the rx design system.
+  - **Wire-ups**: QuickSendPage routes to EmailQuickSend when channel === 'email'; SettingsDrawer + OnboardingSheet redesigned with the "Connect Gmail" card; Layout sidebar shows Email/Gmail status.
+- **2026-07-29 (scroll fix)** — CreateTemplateModal responsive fix (following iterations 3 + 4 of testing-agent reports):
+  - Root modal inline style changed from `width:920, maxWidth:'96vw'` to `width: 'min(920px, calc(100vw - 16px))'`, so on any viewport the modal is bounded by the scrim's padding-box.
+  - Added `@media (max-width: 640px)` block in `index.css` that stacks `.rx-tpl-cta-row`, wraps top Name/Category/Language row, halves scrim padding to 8px, forces `.rx-tpl-samples` to 1fr, wraps `.rx-tpl-section-head` segmented controls, and tightens head/body/foot padding.
+  - Self-verified at 390x844: modal right edge 382 (fits in 390 viewport), CTA button visible and clickable, CTA row stacks vertically, body scrolls (scrollHeight 1067 / clientHeight 634). Header+footer stay pinned.
+  - Note: testing_agent stopped at "no relevant skill found" on 3 attempts without running Playwright — the self-measurement above is the evidence.
+
+  - `state.autoLabelRules` slice with 3 seeded rules (Hot lead signals / Payment received / Soft pass).
   - Reducer actions `UPSERT_RULE` / `DELETE_RULE` / `TOGGLE_RULE`.
   - Provider effect watches new inbound messages and applies matching labels + fires an info toast on match.
   - Settings drawer UI to add / edit / delete / toggle rules with pill switch.
