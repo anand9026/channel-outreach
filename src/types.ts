@@ -26,7 +26,7 @@ export interface CascadeOptions {
 }
 export type PhoneQuality = 'GREEN' | 'YELLOW' | 'RED'
 export type EmailProvider = 'gmail' | 'sendgrid' | 'ses' | 'smtp'
-export type TabId = 'floor' | 'connect' | 'templates' | 'campaigns' | 'inbox' | 'analytics' | 'quicksend'
+export type TabId = 'home' | 'floor' | 'connect' | 'templates' | 'campaigns' | 'inbox' | 'analytics' | 'quicksend'
 
 /** Resolved at send-time from org / brand / campaign / influencer — not free-typed per send. */
 export type DataFieldKey =

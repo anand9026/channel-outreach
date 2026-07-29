@@ -1,4 +1,4 @@
-import { BarChart3, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
+import { BarChart3, Home, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { TabId } from '../types'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
@@ -11,6 +11,7 @@ const primaryNav: {
   label: string
   icon: typeof Send
 }[] = [
+  { id: 'home', label: 'Home', icon: Home },
   { id: 'campaigns', label: 'Campaigns', icon: Send },
   { id: 'quicksend', label: 'Quick Send', icon: Zap },
   { id: 'inbox', label: 'Inbox', icon: Inbox },
@@ -26,15 +27,15 @@ export function Layout({ children }: { children: ReactNode }) {
   const pendingTemplates = state.templates.filter((t) => t.status === 'PENDING').length
   const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // Redirect legacy 'floor' tab values to 'campaigns'
+  // Redirect legacy 'floor' tab values to 'home' as the default landing
   useEffect(() => {
     if (state.activeTab === 'floor') {
-      actions.setTab('campaigns')
+      actions.setTab('home')
     }
   }, [state.activeTab, actions])
 
   const showOnboarding = mode === 'none'
-  const activeTab = state.activeTab === 'floor' ? 'campaigns' : state.activeTab
+  const activeTab = state.activeTab === 'floor' ? 'home' : state.activeTab
   const emailConnected = state.emailAccounts.length > 0
 
   return (

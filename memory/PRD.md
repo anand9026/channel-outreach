@@ -133,7 +133,17 @@ Use **Save to GitHub** in the chat input when ready.
   - **`EmailQuickSend.tsx`** (623 lines) — real Gmail send with compose + CSV bulk flow.
   - **`ConnectPage.tsx`** — restyled full-page Connect flow using the rx design system.
   - **Wire-ups**: QuickSendPage routes to EmailQuickSend when channel === 'email'; SettingsDrawer + OnboardingSheet redesigned with the "Connect Gmail" card; Layout sidebar shows Email/Gmail status.
-- **2026-07-29 (scroll fix)** — CreateTemplateModal responsive fix (following iterations 3 + 4 of testing-agent reports):
+- **2026-07-29 (scroll fix)** — CreateTemplateModal responsive fix:
+  - Root modal inline style changed to `width: 'min(920px, calc(100vw - 16px))', maxHeight: 92vh, display: flex, flexDirection: column` so the modal is always bounded by the scrim.
+  - Added `@media (max-width: 640px)` in `index.css` stacking `.rx-tpl-cta-row`, wrapping the top Name/Category/Language row + `.rx-tpl-section-head` segmented controls, halving scrim padding to 8px, forcing `.rx-tpl-samples` to 1fr.
+  - Self-verified at 390x844: modal.right=382 vs viewport=390 (fits), CTA button visible + clickable, body scrolls (1067 / 634), head + foot pinned.
+
+- **2026-07-29 (Home dashboard)** — Elegant Home landing:
+  - New `HomePage.tsx` — 4 snapshot stats (Sent 7d / Unread / Hot leads / Active campaigns), 3 branded channel cards (WhatsApp/Instagram/Email) with per-channel Sent/Threads/Unread/Response metrics + 7-day sparkline + latest reply preview + connect CTA when not connected, Recent activity feed (last 6 inbound with channel-color dots), Quick actions rail.
+  - Time-aware greeting ("Good morning/afternoon/evening/Working late").
+  - Added `home` tab to `TabId`, new "Home" nav item in the sidebar with Home icon, made Home the default landing tab.
+  - Updated files: `src/App.tsx`, `src/components/Layout.tsx`, `src/pages/HomePage.tsx` (new), `src/store/WhatsAppStore.tsx`, `src/types.ts`, `src/index.css`.
+
   - Root modal inline style changed from `width:920, maxWidth:'96vw'` to `width: 'min(920px, calc(100vw - 16px))'`, so on any viewport the modal is bounded by the scrim's padding-box.
   - Added `@media (max-width: 640px)` block in `index.css` that stacks `.rx-tpl-cta-row`, wraps top Name/Category/Language row, halves scrim padding to 8px, forces `.rx-tpl-samples` to 1fr, wraps `.rx-tpl-section-head` segmented controls, and tightens head/body/foot padding.
   - Self-verified at 390x844: modal right edge 382 (fits in 390 viewport), CTA button visible and clickable, CTA row stacks vertically, body scrolls (scrollHeight 1067 / clientHeight 634). Header+footer stay pinned.
