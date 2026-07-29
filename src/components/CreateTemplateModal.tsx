@@ -308,8 +308,7 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         className="rx-modal rx-tpl-modal"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 920,
-          maxWidth: '100%',
+          width: 'min(920px, calc(100vw - 16px))',
           maxHeight: '92vh',
           display: 'flex',
           flexDirection: 'column',

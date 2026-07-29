@@ -3087,6 +3087,14 @@ a {
     width: 100% !important;
     min-width: 0 !important;
   }
+  /* Section head (title + segmented buttons) also wraps so no button goes off-canvas */
+  .rx-tpl-section-head {
+    flex-wrap: wrap !important;
+    row-gap: 8px;
+  }
+  .rx-tpl-section-head .rx-seg {
+    flex-wrap: wrap;
+  }
   /* Modal scrim padding halved on narrow screens so more content fits */
   .rx-modal-scrim {
     padding: 8px !important;
