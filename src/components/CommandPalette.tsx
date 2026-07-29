@@ -2,26 +2,67 @@ import {
   BarChart3,
   Inbox,
   LayoutTemplate,
+  Mail,
   Search,
   Send,
   Sparkles,
   Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { IgIcon, WaIcon } from './BrandIcons'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
+import type { Conversation, OutreachChannel } from '../types'
+
+type CommandGroup = 'nav' | 'action' | 'campaign' | 'conversation'
 
 type Command = {
   id: string
   label: string
   hint?: string
+  sub?: string
   icon: React.ReactNode
   keywords?: string
+  group: CommandGroup
   action: () => void
+}
+
+const groupOrder: CommandGroup[] = ['nav', 'action', 'campaign', 'conversation']
+const groupTitle: Record<CommandGroup, string> = {
+  nav: 'Navigate',
+  action: 'Actions',
+  campaign: 'Campaigns',
+  conversation: 'Conversations',
+}
+
+function channelIcon(ch: OutreachChannel) {
+  if (ch === 'whatsapp') return <WaIcon size={13} />
+  if (ch === 'instagram') return <IgIcon size={13} />
+  return <Mail size={13} />
+}
+
+function channelLabel(ch: OutreachChannel) {
+  if (ch === 'whatsapp') return 'WhatsApp'
+  if (ch === 'instagram') return 'Instagram'
+  return 'Gmail'
+}
+
+/** Strip HTML tags so email previews display cleanly in the palette. */
+function stripHtml(input: string | undefined): string {
+  if (!input) return ''
+  return input
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /**
  * Global command palette (⌘K / Ctrl+K).
- * Search + jump to pages + primary actions.
+ * Search + jump to pages, primary actions, campaigns, and live conversations
+ * (matches on contact name, handle, phone, email, and message content).
  */
 export function CommandPalette() {
   const { state, actions } = useWhatsAppStore()
@@ -30,7 +71,6 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Keyboard shortcut listener
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -53,38 +93,58 @@ export function CommandPalette() {
 
   const close = () => setOpen(false)
 
-  const commands: Command[] = useMemo(() => {
-    const nav = (id: 'campaigns' | 'quicksend' | 'inbox' | 'templates' | 'analytics') => () => {
-      actions.setTab(id)
-      close()
+  /** Index messages by conversation for content search. */
+  const messagesByConv = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const m of state.messages) {
+      const prev = map.get(m.conversationId) || ''
+      // Keep it small — enough for a match & a preview.
+      map.set(m.conversationId, `${prev} ${stripHtml(m.subject)} ${stripHtml(m.body)}`.slice(0, 2000))
     }
+    return map
+  }, [state.messages])
+
+  const openConversation = (c: Conversation) => {
+    actions.selectConversation(c.id)
+    actions.setTab('inbox')
+    close()
+  }
+
+  const commands: Command[] = useMemo(() => {
+    const nav =
+      (id: 'home' | 'campaigns' | 'quicksend' | 'inbox' | 'templates' | 'analytics') => () => {
+        actions.setTab(id)
+        close()
+      }
     const list: Command[] = [
-      { id: 'go-campaigns', label: 'Go to Campaigns', icon: <Send size={14} />, action: nav('campaigns'), keywords: 'home' },
-      { id: 'go-quicksend', label: 'Go to Quick Send', icon: <Zap size={14} />, action: nav('quicksend'), keywords: 'sandbox test' },
-      { id: 'go-inbox', label: 'Go to Inbox', icon: <Inbox size={14} />, action: nav('inbox'), keywords: 'chat reply' },
-      { id: 'go-templates', label: 'Go to Messages', icon: <LayoutTemplate size={14} />, action: nav('templates'), keywords: 'templates library' },
-      { id: 'go-analytics', label: 'Go to Results', icon: <BarChart3 size={14} />, action: nav('analytics'), keywords: 'analytics stats' },
+      { id: 'go-home', label: 'Go to Home', icon: <Sparkles size={14} />, action: nav('home'), keywords: 'dashboard overview', group: 'nav' },
+      { id: 'go-campaigns', label: 'Go to Campaigns', icon: <Send size={14} />, action: nav('campaigns'), keywords: 'outreach', group: 'nav' },
+      { id: 'go-quicksend', label: 'Go to Quick Send', icon: <Zap size={14} />, action: nav('quicksend'), keywords: 'sandbox test csv', group: 'nav' },
+      { id: 'go-inbox', label: 'Go to Inbox', icon: <Inbox size={14} />, action: nav('inbox'), keywords: 'chat reply messages', group: 'nav' },
+      { id: 'go-templates', label: 'Go to Messages', icon: <LayoutTemplate size={14} />, action: nav('templates'), keywords: 'templates library', group: 'nav' },
+      { id: 'go-analytics', label: 'Go to Results', icon: <BarChart3 size={14} />, action: nav('analytics'), keywords: 'analytics stats', group: 'nav' },
       {
         id: 'new-outreach',
         label: 'New outreach',
         hint: 'Open the send wizard',
         icon: <Sparkles size={14} />,
+        group: 'action',
         action: () => {
           actions.setTab('campaigns')
           close()
-          // Broadcast an event so CampaignsHub can open its send drawer
           window.dispatchEvent(new CustomEvent('rx-open-send-drawer'))
         },
       },
     ]
-    // Deep links: campaigns & conversations
-    state.campaigns.slice(0, 8).forEach((c) => {
+
+    state.campaigns.slice(0, 12).forEach((c) => {
       list.push({
         id: `camp-${c.id}`,
         label: c.name,
-        hint: 'Campaign',
+        hint: c.status,
         icon: <Send size={14} />,
-        keywords: c.status,
+        group: 'campaign',
+        keywords: `${c.kind} ${c.status}`,
         action: () => {
           actions.selectCampaign(c.id)
           actions.setTab('campaigns')
@@ -92,30 +152,62 @@ export function CommandPalette() {
         },
       })
     })
-    state.conversations.slice(0, 8).forEach((c) => {
+
+    // Conversations — indexed lightly so we can search bodies too.
+    for (const c of state.conversations) {
       const inf = state.influencers.find((i) => i.id === c.influencerId)
+      const preview = stripHtml(c.lastPreview)
+      const bodyIndex = messagesByConv.get(c.id) || ''
       list.push({
         id: `conv-${c.id}`,
-        label: inf?.name || 'Conversation',
-        hint: `Inbox · ${c.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}`,
-        icon: <Inbox size={14} />,
-        action: () => {
-          actions.selectConversation(c.id)
-          actions.setTab('inbox')
-          close()
-        },
+        label: inf?.name || inf?.handle || 'Conversation',
+        hint: channelLabel(c.channel),
+        sub: preview || bodyIndex.slice(0, 90),
+        icon: channelIcon(c.channel),
+        group: 'conversation',
+        keywords: [
+          inf?.handle,
+          inf?.phone,
+          inf?.email,
+          inf?.niche,
+          ...(c.labels || []),
+          preview,
+          bodyIndex,
+        ]
+          .filter(Boolean)
+          .join(' '),
+        action: () => openConversation(c),
       })
-    })
+    }
     return list
-  }, [state.campaigns, state.conversations, state.influencers, actions])
+  }, [state.campaigns, state.conversations, state.influencers, messagesByConv, actions])
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return commands
-    const q = query.toLowerCase()
-    return commands.filter((c) =>
-      (c.label + ' ' + (c.hint ?? '') + ' ' + (c.keywords ?? '')).toLowerCase().includes(q),
-    )
+    const q = query.trim().toLowerCase()
+    if (!q) {
+      // No query — show nav + top campaigns + a few conversations.
+      const convHead = commands.filter((c) => c.group === 'conversation').slice(0, 6)
+      const rest = commands.filter((c) => c.group !== 'conversation')
+      return [...rest, ...convHead]
+    }
+    return commands
+      .filter((c) => {
+        const hay = (c.label + ' ' + (c.hint ?? '') + ' ' + (c.sub ?? '') + ' ' + (c.keywords ?? '')).toLowerCase()
+        return hay.includes(q)
+      })
+      .slice(0, 40)
   }, [commands, query])
+
+  // Group filtered commands preserving insertion order.
+  const grouped = useMemo(() => {
+    const buckets: Record<CommandGroup, Command[]> = {
+      nav: [], action: [], campaign: [], conversation: [],
+    }
+    for (const c of filtered) buckets[c.group].push(c)
+    return groupOrder
+      .map((g) => ({ group: g, items: buckets[g] }))
+      .filter((s) => s.items.length > 0)
+  }, [filtered])
 
   useEffect(() => {
     if (cursor >= filtered.length) setCursor(0)
@@ -136,6 +228,9 @@ export function CommandPalette() {
     }
   }
 
+  // Cursor → position within full filtered list, used to highlight in grouped view.
+  const activeId = filtered[cursor]?.id
+
   return (
     <div className="rx-cmdk-scrim" role="dialog" aria-modal="true" onClick={close}>
       <div className="rx-cmdk" onClick={(e) => e.stopPropagation()}>
@@ -154,21 +249,36 @@ export function CommandPalette() {
         </div>
         <div className="rx-cmdk-list">
           {filtered.length === 0 ? (
-            <div className="rx-cmdk-empty">No matches. Try a page name or "new outreach".</div>
+            <div className="rx-cmdk-empty">
+              No matches for “{query}”. Try a contact name, phone, or a phrase from a message.
+            </div>
           ) : (
-            filtered.map((c, i) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`rx-cmdk-item${i === cursor ? ' is-active' : ''}`}
-                onMouseEnter={() => setCursor(i)}
-                onClick={c.action}
-                data-testid={`cmdk-item-${c.id}`}
-              >
-                <span className="rx-cmdk-icon">{c.icon}</span>
-                <span className="rx-cmdk-label">{c.label}</span>
-                {c.hint && <span className="rx-cmdk-hint">{c.hint}</span>}
-              </button>
+            grouped.map(({ group, items }) => (
+              <div key={group} className="rx-cmdk-group">
+                <div className="rx-cmdk-group-head">{groupTitle[group]}</div>
+                {items.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`rx-cmdk-item${activeId === c.id ? ' is-active' : ''}`}
+                    onMouseEnter={() => {
+                      const idx = filtered.findIndex((f) => f.id === c.id)
+                      if (idx >= 0) setCursor(idx)
+                    }}
+                    onClick={c.action}
+                    data-testid={`cmdk-item-${c.id}`}
+                  >
+                    <span className={`rx-cmdk-icon ${c.group === 'conversation' ? 'is-' + (c.hint || '').toLowerCase() : ''}`}>
+                      {c.icon}
+                    </span>
+                    <span className="rx-cmdk-body">
+                      <span className="rx-cmdk-label">{c.label}</span>
+                      {c.sub && <span className="rx-cmdk-sub">{c.sub}</span>}
+                    </span>
+                    {c.hint && <span className="rx-cmdk-hint">{c.hint}</span>}
+                  </button>
+                ))}
+              </div>
             ))
           )}
         </div>
@@ -191,7 +301,6 @@ export function CommandPalette() {
 export function CmdKHint() {
   return (
     <div className="rx-cmdk-hint-btn" onClick={() => {
-      // Simulate ⌘K
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
     }}>
       <Search size={12} /> Search <kbd className="rx-kbd">⌘K</kbd>

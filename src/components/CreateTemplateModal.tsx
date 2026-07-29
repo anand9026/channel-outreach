@@ -14,6 +14,7 @@ import { ApiError, createGmailTemplate, createWhatsAppTemplate } from '../lib/ap
 import { extractMetaSlots } from '../lib/templateSlots'
 import { toMetaBody, toMetaTemplateName } from '../lib/metaTemplate'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
+import { RichTextEditor } from './RichTextEditor'
 import type { OutreachChannel, TemplateCategory } from '../types'
 
 const categories: TemplateCategory[] = ['MARKETING', 'UTILITY', 'AUTHENTICATION']
@@ -494,18 +495,33 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
                   <span className="rx-text-xs rx-muted mono">
                     use {'{{1}}, {{2}}\u2026'} for variables
                   </span>
-                ) : null}
+                ) : (
+                  <span className="rx-text-xs rx-muted">
+                    Rich formatting — bold, links, lists supported
+                  </span>
+                )}
               </div>
-              <textarea
-                className="rx-textarea"
-                rows={5}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                maxLength={1024}
-              />
-              <div className="rx-text-xs rx-muted" style={{ textAlign: 'right' }}>
-                {body.length}/1024
-              </div>
+              {channel === 'email' ? (
+                <RichTextEditor
+                  value={body}
+                  onChange={setBody}
+                  placeholder="Hi {{name}}, we'd love to work with you…"
+                  minHeight={200}
+                />
+              ) : (
+                <>
+                  <textarea
+                    className="rx-textarea"
+                    rows={5}
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    maxLength={1024}
+                  />
+                  <div className="rx-text-xs rx-muted" style={{ textAlign: 'right' }}>
+                    {body.length}/1024
+                  </div>
+                </>
+              )}
               {channel === 'whatsapp' && slots.length > 0 && (
                 <div className="rx-col rx-gap" style={{ marginTop: 8 }}>
                   <div className="rx-label">Sample values (required by Meta review)</div>
@@ -738,7 +754,16 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
                 </div>
               )}
 
-              <div className="rx-tpl-pv-body">{previewBody}</div>
+              <div className="rx-tpl-pv-body">
+                {channel === 'email' ? (
+                  <div
+                    className="rx-tpl-pv-html"
+                    dangerouslySetInnerHTML={{ __html: previewBody || '<em style="opacity:.5">Your email preview will appear here.</em>' }}
+                  />
+                ) : (
+                  previewBody
+                )}
+              </div>
 
               {channel === 'whatsapp' && footer ? (
                 <div className="rx-tpl-pv-footer">{footer}</div>

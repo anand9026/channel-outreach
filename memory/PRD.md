@@ -182,3 +182,18 @@ Use **Save to GitHub** in the chat input when ready.
   - Inbox composer exposes Sim hot lead / Sim paid / Sim neutral demo buttons to easily verify the rules from the UI.
   - Verified end-to-end: a simulated inbound "Sure! Could you share your rates and the brief?" auto-labels the thread as `hot lead` with a toast.
   - Updated files: `src/store/WhatsAppStore.tsx`, `src/components/SettingsDrawer.tsx`, `src/pages/InboxV2.tsx`, `src/index.css`.
+
+
+- **2026-07-29 (rich HTML editor + palette conversation search)** — Two follow-ups from the previous session's "Next Actions", implemented in sequence:
+  - **RichTextEditor** (`src/components/RichTextEditor.tsx` new) — TipTap 3.29 wrapper with StarterKit + Link + Underline + Placeholder. Toolbar: Bold / Italic / Underline / H1 / H2 / bulleted list / numbered list / blockquote / link / undo-redo. Emits HTML via `onChange`; strips empty `<p></p>` sentinel; keeps in sync when caller resets content (`emitUpdate: false`). Styles are theme-aware (uses `--surface`, `--accent`, `--focus-ring`).
+  - **CreateTemplateModal** now renders the RichTextEditor only when `channel === 'email'`. WA path is untouched — plain textarea + `{{1}}` slot picker still work exactly as before. Preview panel renders the email HTML via `dangerouslySetInnerHTML` with `.rx-tpl-pv-html` styles for headings/lists/links/blockquote.
+  - **CommandPalette** rewritten:
+    - Indexed message bodies per conversation (`messagesByConv`) so search matches on `subject + body` text.
+    - Conversations now searchable by contact name, handle, phone, email, niche, labels, `lastPreview`, and message content.
+    - Channel-branded icon (`WaIcon` / `IgIcon` / `Mail`) with green/pink/red accent color per row.
+    - Grouped view: Navigate · Actions · Campaigns · Conversations sections with uppercase group heads.
+    - Empty query shows nav + first six conversations; typed query filters up to 40 items across all groups.
+    - Result rows show a preview subline stripped of HTML for email threads.
+  - Deps added via `yarn add`: `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-link`, `@tiptap/extension-underline`, `@tiptap/extension-placeholder` (v3.29.2).
+  - Verified via screenshot: modal switches to email cleanly, toolbar toggles bold/H1, preview renders HTML in real time; palette opens with `⌘K`, shows grouped nav + campaigns, empty state message rewritten.
+  - Updated files: `src/components/RichTextEditor.tsx` (new), `src/components/CreateTemplateModal.tsx`, `src/components/CommandPalette.tsx`, `src/index.css`, `package.json`.
