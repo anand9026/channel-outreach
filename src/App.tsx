@@ -1,5 +1,6 @@
 import './App.css'
 import { CommandPalette } from './components/CommandPalette'
+import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { Layout } from './components/Layout'
 import { CampaignsHub } from './pages/CampaignsHub'
 import { ConnectPage } from './pages/ConnectPage'
@@ -40,6 +41,7 @@ export default function App() {
         <Router />
       </Layout>
       <CommandPalette />
+      <KeyboardShortcuts />
     </WhatsAppStoreProvider>
   )
 }

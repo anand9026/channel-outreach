@@ -1,4 +1,4 @@
-import { BarChart3, Home, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
+import { BarChart3, ChevronsLeft, ChevronsRight, Home, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { TabId } from '../types'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
@@ -40,13 +40,18 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="rx-shell">
-      <aside className="rx-sidebar" data-testid="rx-sidebar">
+      <aside
+        className={`rx-sidebar${state.prefs.sidebarCollapsed ? ' is-collapsed' : ''}`}
+        data-testid="rx-sidebar"
+      >
         <div className="rx-brand">
           <div className="rx-brand-mark">R</div>
-          <div>
-            <div className="rx-brand-name">Reelax Outreach</div>
-            <div className="rx-brand-org">{state.organization.name}</div>
-          </div>
+          {!state.prefs.sidebarCollapsed && (
+            <div>
+              <div className="rx-brand-name">Reelax Outreach</div>
+              <div className="rx-brand-org">{state.organization.name}</div>
+            </div>
+          )}
         </div>
 
         <nav className="rx-nav" aria-label="Primary">
@@ -62,9 +67,10 @@ export function Layout({ children }: { children: ReactNode }) {
                 className={`rx-nav-item${isActive ? ' is-active' : ''}`}
                 onClick={() => actions.setTab(id)}
                 data-testid={`nav-${id}`}
+                title={state.prefs.sidebarCollapsed ? label : undefined}
               >
                 <Icon size={17} strokeWidth={1.8} />
-                <span>{label}</span>
+                {!state.prefs.sidebarCollapsed && <span>{label}</span>}
                 {badge ? <span className="rx-nav-badge">{badge}</span> : null}
               </button>
             )
@@ -72,22 +78,26 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="rx-sidebar-footer">
-          <button
-            type="button"
-            className="rx-settings-btn"
-            onClick={() => actions.setTab('connect')}
-            data-testid="open-connect"
-          >
-            <UserPlus size={16} />
-            <span>Connect channels</span>
-          </button>
-          <div className="rx-conn-status">
-            <span
-              className={`rx-dot${state.whatsAppNumbers.length ? ' is-live-wa' : ''}`}
-              aria-hidden
-            />
-            WhatsApp {state.whatsAppNumbers.length ? 'live' : 'not connected'}
-          </div>
+          {!state.prefs.sidebarCollapsed && (
+            <button
+              type="button"
+              className="rx-settings-btn"
+              onClick={() => actions.setTab('connect')}
+              data-testid="open-connect"
+            >
+              <UserPlus size={16} />
+              <span>Connect channels</span>
+            </button>
+          )}
+          {!state.prefs.sidebarCollapsed && (
+            <>
+              <div className="rx-conn-status">
+                <span
+                  className={`rx-dot${state.whatsAppNumbers.length ? ' is-live-wa' : ''}`}
+                  aria-hidden
+                />
+                WhatsApp {state.whatsAppNumbers.length ? 'live' : 'not connected'}
+              </div>
           <div className="rx-conn-status">
             <span
               className={`rx-dot${state.instagramAccounts.length ? ' is-live-ig' : ''}`}
@@ -108,14 +118,34 @@ export function Layout({ children }: { children: ReactNode }) {
               'Email not connected'
             )}
           </div>
+          </>
+          )}
           <button
             type="button"
             className="rx-settings-btn"
             onClick={() => setSettingsOpen(true)}
             data-testid="open-settings"
+            title={state.prefs.sidebarCollapsed ? 'Settings' : undefined}
           >
             <Settings size={16} />
-            <span>Settings</span>
+            {!state.prefs.sidebarCollapsed && <span>Settings</span>}
+          </button>
+          <button
+            type="button"
+            className="rx-settings-btn rx-sidebar-collapse-btn"
+            onClick={() => actions.setSidebarCollapsed(!state.prefs.sidebarCollapsed)}
+            data-testid="toggle-sidebar"
+            title={state.prefs.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={state.prefs.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {state.prefs.sidebarCollapsed ? (
+              <ChevronsRight size={16} />
+            ) : (
+              <>
+                <ChevronsLeft size={16} />
+                <span>Collapse</span>
+              </>
+            )}
           </button>
         </div>
       </aside>

@@ -3,12 +3,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { CreateTemplateModal } from '../components/CreateTemplateModal'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
-import { listWhatsAppTemplates, type MetaTemplate } from '../lib/api'
+import {
+  GMAIL_USER_ID,
+  listGmailTemplates,
+  listWhatsAppTemplates,
+  type GmailTemplate,
+  type MetaTemplate,
+} from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 type Row = {
   key: string
-  source: 'local' | 'meta'
+  source: 'local' | 'meta' | 'gmail'
   name: string
   channel: 'whatsapp' | 'email' | 'instagram'
   category: string
@@ -35,6 +41,8 @@ export function TemplatesLib() {
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [metaLoading, setMetaLoading] = useState(false)
   const [metaError, setMetaError] = useState<string | null>(null)
+  const [gmailTemplates, setGmailTemplates] = useState<GmailTemplate[]>([])
+  const [gmailError, setGmailError] = useState<string | null>(null)
 
   const loadMeta = async () => {
     setMetaLoading(true)
@@ -49,8 +57,24 @@ export function TemplatesLib() {
     }
   }
 
+  const loadGmail = async () => {
+    setGmailError(null)
+    try {
+      const gmailAcc = state.emailAccounts.find(
+        (a) => a.provider === 'gmail' && a.userId,
+      )
+      const userId = gmailAcc?.userId || GMAIL_USER_ID
+      const res = await listGmailTemplates({ user_id: userId })
+      setGmailTemplates(res)
+    } catch (e) {
+      setGmailError((e as Error).message || 'Could not load Gmail templates')
+    }
+  }
+
   useEffect(() => {
     void loadMeta()
+    void loadGmail()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const rows = useMemo<Row[]>(() => {
@@ -89,7 +113,25 @@ export function TemplatesLib() {
         }
       })
 
-    return [...localRows, ...metaRows]
+    const gmailRows: Row[] = gmailTemplates.map((t) => {
+      const bodyText = (t.html_template || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      return {
+        key: `gmail:${t.template_id}`,
+        source: 'gmail',
+        name: t.name || t.template_name,
+        channel: 'email',
+        category: 'UTILITY',
+        body: bodyText,
+        variables: [],
+        status: 'ACTIVE',
+        updatedAt: t.updated_at || t.created_at || '',
+      }
+    })
+
+    return [...localRows, ...metaRows, ...gmailRows]
       .filter((r) => (tab === 'all' ? true : r.channel === tab))
       .filter((r) =>
         !search
@@ -98,7 +140,7 @@ export function TemplatesLib() {
             r.body.toLowerCase().includes(search.toLowerCase()),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [state.templates, metaTemplates, tab, search])
+  }, [state.templates, metaTemplates, gmailTemplates, tab, search])
 
   return (
     <div className="rx-page">
@@ -110,13 +152,16 @@ export function TemplatesLib() {
             <button
               type="button"
               className="rx-btn secondary"
-              onClick={loadMeta}
+              onClick={() => {
+                void loadMeta()
+                void loadGmail()
+              }}
               disabled={metaLoading}
-              title="Refresh Meta templates"
+              title="Refresh Meta and Gmail templates"
               data-testid="refresh-meta-templates"
             >
               <RefreshCcw size={13} className={metaLoading ? 'rx-spin' : ''} />
-              Refresh Meta
+              Refresh
             </button>
             <button
               type="button"
@@ -235,6 +280,8 @@ export function TemplatesLib() {
                   <td>
                     {t.source === 'meta' ? (
                       <span className="rx-live-tag mono">META</span>
+                    ) : t.source === 'gmail' ? (
+                      <span className="rx-live-tag mono" style={{ background: 'rgba(47, 128, 255, 0.14)', color: 'var(--email)' }}>GMAIL</span>
                     ) : (
                       <span className="rx-text-xs rx-muted">local</span>
                     )}

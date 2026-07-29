@@ -135,6 +135,12 @@ Use **Save to GitHub** in the chat input when ready.
   - **Wire-ups**: QuickSendPage routes to EmailQuickSend when channel === 'email'; SettingsDrawer + OnboardingSheet redesigned with the "Connect Gmail" card; Layout sidebar shows Email/Gmail status.
 - **2026-07-29 (scroll fix)** — CreateTemplateModal responsive fix:
   - Root modal inline style changed to `width: 'min(920px, calc(100vw - 16px))', maxHeight: 92vh, display: flex, flexDirection: column` so the modal is always bounded by the scrim.
+- **2026-07-29 (UX polish — shortcuts + sidebar collapse)** — Two quality-of-life additions:
+  - **Keyboard shortcuts overlay** (`KeyboardShortcuts.tsx` new) — press `?` (outside inputs) to see grouped shortcuts (Global · Composer · Inbox) with kbd chips; Mac/Windows-aware meta glyph; `Esc` closes.
+  - **Sidebar collapse** — new "Collapse" button toggles compact 68px icon-only sidebar. State persists via `prefs.sidebarCollapsed`. Nav items become icon buttons with tooltips; labels hidden. Verified: sidebar 240→68px, content gains real estate.
+
+- **2026-07-29 (Gmail identity + userId storage)** — Sidebar footer now displays the connected Gmail address (mono, truncated at 140px) instead of a generic label. `EmailAccount` extended with `userId?: string`; `SYNC_GMAIL` persists Gmail's `user_id` from `getGmailConnection` — unlocks all downstream Gmail API calls.
+
 - **2026-07-29 (Home dashboard)** — Elegant Home landing:
   - New `HomePage.tsx` — 4 snapshot stats, 3 branded channel cards with sparklines + latest-reply preview + connect CTA, Recent activity feed, Quick actions rail. Time-aware greeting.
   - Added `home` tab, new Home nav item, made Home the default landing tab; legacy 'floor' redirects to Home.
@@ -143,7 +149,17 @@ Use **Save to GitHub** in the chat input when ready.
   - Added `@media (max-width: 640px)` in `index.css` stacking `.rx-tpl-cta-row`, wrapping the top Name/Category/Language row + `.rx-tpl-section-head` segmented controls, halving scrim padding to 8px, forcing `.rx-tpl-samples` to 1fr.
   - Self-verified at 390x844: modal.right=382 vs viewport=390 (fits), CTA button visible + clickable, body scrolls (1067 / 634), head + foot pinned.
 
-- **2026-07-29 (Gmail identity in sidebar + userId storage)** — Small but meaningful UX polish:
+- **2026-07-29 (Gmail scaffolds — inbox polling + templates)** — All the pieces to make Gmail come alive the moment OAuth completes:
+  - `MERGE_GMAIL_THREADS` reducer maps `GmailThreadMeta` → local `conversations` (channel:email, isLive, participant becomes an influencer via email address).
+  - `doLiveSync` polling loop now also calls `listGmailThreads({user_id})` alongside WhatsApp when a Gmail account with `userId` is present. Errors are swallowed non-fatally so WA sync isn't affected.
+  - `CreateTemplateModal` email branch passes the connected Gmail `userId` (falling back to `GMAIL_USER_ID`) when calling `createGmailTemplate`.
+  - `TemplatesLib` fetches Gmail templates via `listGmailTemplates` alongside Meta + local and shows them with a blue **GMAIL** badge; Refresh button now refreshes both providers.
+  - Updated files: `src/store/WhatsAppStore.tsx`, `src/components/CreateTemplateModal.tsx`, `src/pages/TemplatesLib.tsx`.
+
+  - **Keyboard shortcuts overlay** (`KeyboardShortcuts.tsx` new) — press `?` anywhere (outside inputs) to see a grouped list of shortcuts (Global · Composer · Inbox) with proper kbd chips. Auto-detects Mac vs Windows for the meta key glyph. `Esc` closes.
+  - **Sidebar collapse** — new "Collapse" button in the sidebar footer toggles a compact 68px icon-only sidebar. State persists via `prefs.sidebarCollapsed`. Nav items become icon buttons with tooltips; brand label + status text + connect button hidden; expand chevron pops the sidebar back open. Verified: sidebar width goes from 240px → 68px, main content gains real estate for wider Inbox / Home layouts.
+  - Updated files: `src/store/WhatsAppStore.tsx`, `src/components/Layout.tsx`, `src/App.tsx`, `src/components/KeyboardShortcuts.tsx` (new), `src/index.css`.
+
   - Sidebar footer email row now displays the connected `fromEmail` (mono, truncated at 140px with title tooltip) instead of the generic "Email live" label — so users always see which Gmail account is powering their sending.
   - Added `userId?: string` to `EmailAccount` type + extended `SYNC_GMAIL` reducer to persist Gmail's `user_id` from `getGmailConnection()` — required to call any Gmail API endpoint (`listGmailThreads`, `sendGmailMessage`, etc.) on behalf of the connected user.
   - This unblocks future Gmail inbox polling and template creation against the real Gmail API — every downstream call now has the user identifier it needs.

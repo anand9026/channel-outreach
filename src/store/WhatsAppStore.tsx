@@ -35,10 +35,12 @@ import {
   getGmailConnection,
   getWhatsAppConnection,
   getWhatsAppInboxMessages,
+  listGmailThreads,
   listWhatsAppInbox,
   sendWhatsAppText,
   type ConnectionInfo,
   type GmailConnectionInfo,
+  type GmailThreadMeta,
   type InboxMessage as ApiInboxMessage,
   type InboxThread as ApiInboxThread,
 } from '../lib/api'
@@ -114,6 +116,8 @@ export interface AppState {
     theme: 'light' | 'dark' | 'system'
     /** Desktop notification opt-in state — mirrors Notification.permission */
     notifyEnabled: boolean
+    /** Sidebar collapsed to icon-only mode */
+    sidebarCollapsed: boolean
   }
   cannedReplies: Array<{ id: string; title: string; body: string }>
   autoLabelRules: Array<{
@@ -256,12 +260,14 @@ type Action =
   | { type: 'SET_LIVE_SYNCED'; ts: string; error?: string | null }
   | { type: 'SET_LIVE_CONNECTION'; connection: ConnectionInfo | null }
   | { type: 'MERGE_INBOX_THREADS'; threads: ApiInboxThread[] }
+  | { type: 'MERGE_GMAIL_THREADS'; threads: GmailThreadMeta[]; emailAccountId: string }
   | {
       type: 'MERGE_INBOX_MESSAGES'
       payload: { phone: string; messages: ApiInboxMessage[]; phoneNumberId?: string }
     }
   | { type: 'SET_THEME'; theme: 'light' | 'dark' | 'system' }
   | { type: 'SET_NOTIFY_ENABLED'; enabled: boolean }
+  | { type: 'SET_SIDEBAR_COLLAPSED'; collapsed: boolean }
   | { type: 'SET_CONV_LABELS'; conversationId: string; labels: string[] }
   | { type: 'BULK_RESOLVE'; conversationIds: string[] }
   | { type: 'BULK_ASSIGN'; conversationIds: string[]; memberId: string | undefined }
@@ -318,6 +324,7 @@ const initialState: AppState = {
   prefs: {
     theme: 'system',
     notifyEnabled: false,
+    sidebarCollapsed: false,
   },
   cannedReplies: [
     {
@@ -1569,6 +1576,79 @@ function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, influencers, conversations }
     }
+    case 'MERGE_GMAIL_THREADS': {
+      const threads = action.threads || []
+      if (threads.length === 0) return state
+      let influencers = [...state.influencers]
+      let conversations = [...state.conversations]
+
+      for (const t of threads) {
+        const email = (t.to || '').trim().toLowerCase()
+        if (!email) continue
+        // Find influencer by email; create synthetic if none
+        let inf = influencers.find(
+          (i) => (i.email || '').toLowerCase() === email,
+        )
+        if (!inf) {
+          inf = {
+            id: `ext_em_${email.replace(/[^a-z0-9]/g, '_')}`,
+            name: email.split('@')[0] || email,
+            handle: '',
+            phone: '',
+            email,
+            followers: '—',
+            niche: 'External',
+          }
+          influencers = [...influencers, inf]
+        }
+        const convId = conversationKey(
+          ORG_ID,
+          'email',
+          action.emailAccountId,
+          inf.id,
+        )
+        const existing = conversations.find((c) => c.id === convId)
+        const preview = (t.snippet || t.subject || '').slice(0, 80)
+        if (!existing) {
+          conversations = [
+            ...conversations,
+            {
+              id: convId,
+              organizationId: ORG_ID,
+              channel: 'email',
+              emailAccountId: action.emailAccountId,
+              influencerId: inf.id,
+              campaignIds: [],
+              status: 'open',
+              lastMessageAt: t.last_message_at,
+              unreadCount: 0,
+              lastPreview: preview,
+              lastInboundAt: t.last_message_at,
+              isLive: true,
+            },
+          ]
+        } else {
+          conversations = conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  lastMessageAt:
+                    t.last_message_at > c.lastMessageAt
+                      ? t.last_message_at
+                      : c.lastMessageAt,
+                  lastPreview: preview || c.lastPreview,
+                  lastInboundAt:
+                    t.last_message_at > (c.lastInboundAt || '')
+                      ? t.last_message_at
+                      : c.lastInboundAt,
+                  isLive: true,
+                }
+              : c,
+          )
+        }
+      }
+      return { ...state, influencers, conversations }
+    }
     case 'MERGE_INBOX_MESSAGES': {
       const { phone, messages: apiMsgs, phoneNumberId: hint } = action.payload
       if (!apiMsgs || apiMsgs.length === 0) return state
@@ -1668,6 +1748,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, prefs: { ...state.prefs, theme: action.theme } }
     case 'SET_NOTIFY_ENABLED':
       return { ...state, prefs: { ...state.prefs, notifyEnabled: action.enabled } }
+    case 'SET_SIDEBAR_COLLAPSED':
+      return { ...state, prefs: { ...state.prefs, sidebarCollapsed: action.collapsed } }
     case 'SET_CONV_LABELS':
       return {
         ...state,
@@ -1878,6 +1960,7 @@ interface StoreContextValue {
     setTheme: (theme: 'light' | 'dark' | 'system') => void
     enableNotifications: () => Promise<boolean>
     disableNotifications: () => void
+    setSidebarCollapsed: (collapsed: boolean) => void
     setConversationLabels: (conversationId: string, labels: string[]) => void
     bulkResolve: (conversationIds: string[]) => void
     bulkAssign: (conversationIds: string[], memberId: string | undefined) => void
@@ -2100,6 +2183,26 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message
       dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: msg })
+    }
+
+    // Gmail polling — only runs if a Gmail account is connected with a userId.
+    const cur = stateRef.current
+    const em = cur.emailAccounts.find(
+      (a) => a.provider === 'gmail' && a.userId,
+    )
+    if (em && em.userId) {
+      try {
+        const res = await listGmailThreads({ user_id: em.userId, limit: 40 })
+        if (res && res.length > 0) {
+          dispatch({
+            type: 'MERGE_GMAIL_THREADS',
+            threads: res,
+            emailAccountId: em.id,
+          })
+        }
+      } catch {
+        /* Gmail sync errors are non-fatal for the WA live indicator */
+      }
     }
   }, [])
 
@@ -2538,6 +2641,8 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       },
       disableNotifications: () =>
         dispatch({ type: 'SET_NOTIFY_ENABLED', enabled: false }),
+      setSidebarCollapsed: (collapsed) =>
+        dispatch({ type: 'SET_SIDEBAR_COLLAPSED', collapsed }),
       setConversationLabels: (conversationId, labels) =>
         dispatch({ type: 'SET_CONV_LABELS', conversationId, labels }),
       bulkResolve: (conversationIds) =>

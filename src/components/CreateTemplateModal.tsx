@@ -57,7 +57,7 @@ let uidCounter = 0
 const uid = (p: string) => `${p}_${Date.now().toString(36)}_${++uidCounter}`
 
 export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
-  const { actions } = useWhatsAppStore()
+  const { state, actions } = useWhatsAppStore()
   const [channel, setChannel] = useState<OutreachChannel>('whatsapp')
 
   // Core
@@ -290,7 +290,11 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     }
     setSubmitting(true)
     try {
+      const gmailAcc = state.emailAccounts.find(
+        (a) => a.provider === 'gmail' && a.userId,
+      )
       await createGmailTemplate({
+        user_id: gmailAcc?.userId,
         template_name: name.trim(),
         subject_template: subject.trim(),
         html_template: body.trim(),
