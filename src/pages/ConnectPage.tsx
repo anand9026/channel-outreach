@@ -51,8 +51,10 @@ export function ConnectPage() {
       actions.syncGmail(info || null)
       if (!opts?.quiet) {
         actions.toast(
-          info?.connected && info.email_address
-            ? `Gmail live · ${info.email_address}`
+          info?.connected
+            ? info.email_address
+              ? `Gmail live · ${info.email_address}`
+              : 'Gmail live'
             : 'No Gmail account connected yet',
           info?.connected ? 'success' : 'info',
         )
@@ -278,7 +280,9 @@ export function ConnectPage() {
             <div className="rx-channel-identity" style={{ marginTop: 4 }}>
               <div>
                 <div className="rx-channel-identity-name">{gmailAccount.fromName}</div>
-                <div className="mono rx-text-xs rx-muted">{gmailAccount.fromEmail}</div>
+                <div className="mono rx-text-xs rx-muted">
+                  {gmailAccount.fromEmail || 'Signed in with Google'}
+                </div>
               </div>
               <span className="rx-badge success">
                 <CheckCircle2 size={11} /> Verified

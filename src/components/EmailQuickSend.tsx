@@ -343,7 +343,7 @@ export function EmailQuickSend() {
     <div className="rx-page">
       <PageHeader
         title="Quick Send"
-        subtitle={`From ${gmailAccount.fromEmail} — paste emails or upload a CSV and send.`}
+        subtitle={`From ${gmailAccount.fromEmail || 'your Google account'} — paste emails or upload a CSV and send.`}
         actions={
           <button
             type="button"
@@ -373,7 +373,9 @@ export function EmailQuickSend() {
             <span className="rx-ch-dot email" />
             <div>
               <strong>{gmailAccount.fromName}</strong>
-              <div className="mono rx-text-xs rx-muted">{gmailAccount.fromEmail}</div>
+              <div className="mono rx-text-xs rx-muted">
+                {gmailAccount.fromEmail || 'Signed in with Google'}
+              </div>
             </div>
           </div>
           <span className="rx-badge success">

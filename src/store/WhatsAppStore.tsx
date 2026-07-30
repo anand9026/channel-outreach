@@ -600,15 +600,17 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'SYNC_GMAIL': {
       const others = state.emailAccounts.filter((a) => a.provider !== 'gmail')
-      if (!action.payload.connected || !action.payload.emailAddress) {
+      if (!action.payload.connected) {
         return { ...state, emailAccounts: others }
       }
-      const email = action.payload.emailAddress
       const existing = state.emailAccounts.find((a) => a.provider === 'gmail')
+      // The address can lag behind the token when Google's profile lookup fails,
+      // so keep any address we already resolved rather than dropping the account.
+      const email = action.payload.emailAddress || existing?.fromEmail || ''
       const account: EmailAccount = {
         id: existing?.id || uid('em'),
         organizationId: ORG_ID,
-        fromName: existing?.fromName || email.split('@')[0] || 'Gmail',
+        fromName: existing?.fromName || email.split('@')[0] || 'Google account',
         fromEmail: email,
         provider: 'gmail',
         domain: email.split('@')[1] || 'gmail.com',
@@ -2478,7 +2480,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({
           type: 'SYNC_GMAIL',
           payload: {
-            connected: Boolean(info?.connected && info.email_address),
+            connected: Boolean(info?.connected),
             emailAddress: info?.email_address,
             channelId: info?.channel_id,
             userId: info?.user_id,
@@ -2711,7 +2713,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({
           type: 'SYNC_GMAIL',
           payload: {
-            connected: Boolean(info?.connected && info.email_address),
+            connected: Boolean(info?.connected),
             emailAddress: info?.email_address,
             channelId: info?.channel_id,
             userId: info?.user_id,
