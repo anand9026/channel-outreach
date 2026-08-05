@@ -729,6 +729,37 @@ export async function listOutreachTemplates(input?: {
   return res.data?.templates ?? []
 }
 
+export type WhatsAppTemplateSyncSummary = {
+  org_id: string
+  status_filter: string
+  meta_total: number
+  created: number
+  updated: number
+  skipped: number
+  errors?: Array<{ name: string; message: string }>
+}
+
+export async function syncOutreachWhatsAppTemplates(input?: {
+  org_id?: string
+  status?: string
+  waba_id?: string
+  limit?: number
+}) {
+  const res = await request<ApiSuccess<WhatsAppTemplateSyncSummary>>(
+    '/outreach/templates/sync-whatsapp',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input?.org_id),
+        status: input?.status || 'APPROVED',
+        waba_id: input?.waba_id,
+        limit: input?.limit,
+      }),
+    },
+  )
+  return res.data
+}
+
 export async function createOutreachTemplate(input: {
   org_id?: string
   brand_id?: string

@@ -9,6 +9,7 @@ import {
   listOutreachTemplates,
   listWhatsAppTemplates,
   resolveOrgId,
+  syncOutreachWhatsAppTemplates,
   type GmailTemplate,
   type MetaTemplate,
   type OutreachTemplateRow,
@@ -93,6 +94,15 @@ export function TemplatesLib() {
     try {
       const res = await listWhatsAppTemplates({ limit: 100 })
       setMetaTemplates(res)
+      try {
+        await syncOutreachWhatsAppTemplates({
+          org_id: resolveOrgId(),
+          status: 'APPROVED',
+        })
+        await loadRegistry()
+      } catch {
+        /* registry sync is best-effort */
+      }
     } catch (e) {
       setMetaError((e as Error).message || 'Could not load Meta templates')
     } finally {
