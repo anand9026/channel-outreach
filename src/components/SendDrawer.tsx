@@ -33,11 +33,11 @@ function resolveSendRecipientCount(
   collections: CollectionList[],
   campaigns: { id: string; influencerIds: string[]; recipientCount?: number }[],
 ): number {
-  if (s.audience.length > 0) return s.audience.length
   if (s.selectedCollectionId) {
     const col = collections.find((c) => c.id === s.selectedCollectionId)
-    return col ? collectionCreatorCount(col) : 0
+    if (col) return collectionCreatorCount(col)
   }
+  if (s.audience.length > 0) return s.audience.length
   if (s.campaignId) {
     const camp = campaigns.find((c) => c.id === s.campaignId)
     if (!camp) return 0
@@ -96,13 +96,14 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
   )
 
   useEffect(() => {
-    if (open) {
-      setS(defaultState(presetCampaignId ?? null, presetName ?? ''))
-      void actions.refreshOutreachTemplates().catch(() => {
-        /* SQL unavailable */
-      })
-    }
-  }, [open, presetCampaignId, presetName, actions])
+    if (!open) return
+    setS(defaultState(presetCampaignId ?? null, presetName ?? ''))
+    void actions.refreshOutreachTemplates().catch(() => {
+      /* SQL unavailable */
+    })
+    // Reset only when the drawer opens — not when store actions refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, presetCampaignId, presetName])
 
   const audienceIds = resolveSendAudienceIds(s)
   const recipientCount = resolveSendRecipientCount(
@@ -375,14 +376,24 @@ function StepAudience({
   }
 
   const selectCollection = (colId: string) => {
-    const col = state.collections.find((c) => c.id === colId)
-    if (!col) return
-    setS({
-      ...s,
-      selectedCollectionId: col.id,
-      audience: [],
-      audienceLabel: col.name,
-      campaignId: null,
+    setS((prev) => {
+      const col = state.collections.find((c) => c.id === colId)
+      if (!col) return prev
+      if (prev.selectedCollectionId === colId) {
+        return {
+          ...prev,
+          selectedCollectionId: null,
+          audience: [],
+          audienceLabel: '',
+        }
+      }
+      return {
+        ...prev,
+        selectedCollectionId: col.id,
+        audience: [],
+        audienceLabel: col.name,
+        campaignId: null,
+      }
     })
   }
 
@@ -521,11 +532,22 @@ function StepAudience({
 
       <div className="rx-mt-6 rx-text-2 rx-text-sm">
         <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6 }} />
-        <strong>{recipientCount}</strong> creator
-        {recipientCount === 1 ? '' : 's'} selected
-        {s.selectedCollectionId ? (
-          <span className="rx-caption"> · roster resolved at send</span>
-        ) : null}
+        {s.selectedCollectionId && recipientCount > 0 ? (
+          <>
+            <strong>{state.collections.find((c) => c.id === s.selectedCollectionId)?.name ?? 'Collection'}</strong>
+            {' · '}
+            <strong>{recipientCount}</strong> creator
+            {recipientCount === 1 ? '' : 's'}
+            <span className="rx-caption"> · roster resolved at send</span>
+          </>
+        ) : recipientCount > 0 ? (
+          <>
+            <strong>{recipientCount}</strong> creator
+            {recipientCount === 1 ? '' : 's'} selected
+          </>
+        ) : (
+          <>No creators selected yet</>
+        )}
       </div>
     </>
   )
