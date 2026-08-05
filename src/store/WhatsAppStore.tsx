@@ -26,7 +26,8 @@ import {
   seedWhatsAppNumbers,
 } from '../data/seed'
 import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
-import { extractSlots, mergeBindings, renderWithBindings, bodyParamsForBindings, resolveField } from '../lib/variables'
+import { formatOutreachTimestamp } from '../lib/outreach-timestamp'
+import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
 import {
   ApiError,
   createOutreachCampaign as apiCreateOutreachCampaign,
@@ -47,10 +48,8 @@ import {
   resolveOrgId,
   syncOutreachWhatsAppTemplates,
   sendGmailMessage,
-  sendGmailTemplate,
-  sendWhatsAppTemplate,
   sendWhatsAppText,
-  updateOutreachCampaign,
+  sendOutreachCampaign,
   type ConnectionInfo,
   type GmailConnectionInfo,
   type GmailThreadMessage,
@@ -67,7 +66,6 @@ import {
   type OutreachThreadRow,
 } from '../lib/api'
 import {
-  isWhatsAppTemplateSendable,
   type AudienceSource,
   type Brand,
   type Campaign,
@@ -451,7 +449,7 @@ function mapOutreachCampaignRow(row: OutreachCampaignRow): Campaign {
     collectionId:
       row.audience_type === 'collection' ? row.audience_ref_id ?? null : null,
     influencerIds: [],
-    createdAt: new Date(Number(row.date_added) * 1000).toISOString(),
+    createdAt: formatOutreachTimestamp(row.date_added, nowIso()),
     sentCount: Number(row.sent_count ?? 0),
     failedCount: Number(row.failed_count ?? 0),
     recipientCount: Number(row.recipient_count ?? 0),
@@ -469,7 +467,7 @@ function mapOutreachCollectionRow(row: OutreachCollectionRow): CollectionList {
     campaignId: row.campaign_id ?? null,
     influencerIds: [],
     influencerCount: Number(row.influencer_count ?? 0),
-    createdAt: row.date_added || new Date().toISOString(),
+    createdAt: formatOutreachTimestamp(row.date_added, nowIso()),
   }
 }
 
@@ -538,8 +536,8 @@ function mapOutreachTemplateRow(row: OutreachTemplateRow): Template {
     variables,
     bindings,
     status: mapOutreachTemplateStatus(row.status),
-    createdAt: new Date(Number(row.date_added) * 1000).toISOString(),
-    updatedAt: new Date(Number(row.date_modified) * 1000).toISOString(),
+    createdAt: formatOutreachTimestamp(row.date_added, nowIso()),
+    updatedAt: formatOutreachTimestamp(row.date_modified, nowIso()),
   }
 }
 
@@ -1604,7 +1602,7 @@ function reducer(state: AppState, action: Action): AppState {
           businessId: '',
           qualityRating: 'GREEN' as const,
           messagingTier: 'TIER_10K' as const,
-          connectedAt: new Date(Number(c.date_added) * 1000).toISOString(),
+          connectedAt: formatOutreachTimestamp(c.date_added, nowIso()),
         }))
       return {
         ...state,
@@ -2911,156 +2909,62 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       }
     }) => {
       const st = stateRef.current
-      const campaign = st.campaigns.find((c) => c.id === payload.campaignId) ?? null
-      const brand = campaign?.brandId
-        ? st.brands.find((b) => b.id === campaign.brandId) ?? null
-        : null
-
-      const successful: Array<{
-        to: string
-        body: string
-        name?: string
-        wamid?: string
+      const channels: Array<{
+        medium: 'whatsapp' | 'gmail'
+        outreach_channel_id: string
+        outreach_template_id: string
+        variable_mapping?: Record<string, string>
       }> = []
-      let sent = 0
-      let failed = 0
 
       if (payload.whatsapp) {
-        const template = st.templates.find((t) => t.id === payload.whatsapp!.templateId)
-        if (!template || template.channel !== 'whatsapp') {
-          throw new Error('WhatsApp template not found')
-        }
-        if (!isWhatsAppTemplateSendable(template)) {
-          throw new Error('WhatsApp template must be approved before sending')
-        }
-        const bindings = mergeBindings(
-          template.bindings,
-          payload.whatsapp.variableMapping,
-        )
-
-        for (const influencerId of payload.influencerIds) {
-          const influencer = st.influencers.find((i) => i.id === influencerId)
-          if (!influencer) {
-            failed += 1
-            continue
-          }
-          const phoneDigits = normPhone(influencer.phone)
-          if (!phoneDigits) {
-            failed += 1
-            continue
-          }
-
-          const ctx = {
-            org: st.organization,
-            brand,
-            campaign,
-            influencer,
-          }
-          const preview = renderWithBindings(template.body, bindings, ctx)
-          const bodyParams = bodyParamsForBindings(bindings, ctx)
-
-          try {
-            const res = (await sendWhatsAppTemplate({
-              to: phoneDigits,
-              template_name: template.name,
-              language_code: template.language || 'en_US',
-              bodyParams: bodyParams.length ? bodyParams : undefined,
-              phone_number_id: payload.whatsapp.phoneNumberId,
-              preview_body: preview,
-              org_id: resolveOrgId(),
-              outreach_campaign_id: payload.campaignId,
-            })) as { messages?: Array<{ id?: string }> } | undefined
-            const wamid = res?.messages?.[0]?.id
-            successful.push({
-              to: phoneDigits,
-              body: preview,
-              name: influencer.name,
-              wamid,
-            })
-            sent += 1
-          } catch {
-            failed += 1
-          }
-        }
-
-        if (successful.length) {
-          dispatch({
-            type: 'LOG_WHATSAPP_SENDS',
-            payload: {
-              sends: successful,
-              phoneNumberId: payload.whatsapp.phoneNumberId,
-              campaignId: payload.campaignId,
-            },
+        const waNumber =
+          st.whatsAppNumbers.find(
+            (n) => n.phoneNumberId === payload.whatsapp!.phoneNumberId,
+          ) ?? st.whatsAppNumbers[0]
+        if (waNumber?.id) {
+          channels.push({
+            medium: 'whatsapp',
+            outreach_channel_id: waNumber.id,
+            outreach_template_id: payload.whatsapp.templateId,
+            variable_mapping: payload.whatsapp.variableMapping,
           })
         }
       }
 
       if (payload.email) {
-        const template = st.templates.find((t) => t.id === payload.email!.templateId)
-        if (!template || template.channel !== 'email') {
-          throw new Error('Email template not found')
-        }
-        const emailAcc = st.emailAccounts.find(
-          (a) => a.id === payload.email!.emailAccountId,
-        )
-        const bindings = mergeBindings(
-          template.bindings,
-          payload.email.variableMapping,
-        )
-
-        for (const influencerId of payload.influencerIds) {
-          const influencer = st.influencers.find((i) => i.id === influencerId)
-          if (!influencer?.email) {
-            failed += 1
-            continue
-          }
-          const ctx = {
-            org: st.organization,
-            brand,
-            campaign,
-            influencer,
-          }
-          const vars: Record<string, string> = {}
-          for (const b of bindings) {
-            vars[b.slot] = resolveField(b.field, ctx, b.literal)
-          }
-          if (influencer.name) {
-            vars.name = influencer.name
-            vars.first_name = influencer.name.split(' ')[0] || influencer.name
-          }
-
-          try {
-            await sendGmailTemplate({
-              to: influencer.email,
-              template_name: template.name,
-              variables: vars,
-              user_id: emailAcc?.userId,
-              org_id: resolveOrgId(),
-            })
-            sent += 1
-          } catch {
-            failed += 1
-          }
+        const gmailChannels = await listOutreachChannels({
+          org_id: resolveOrgId(),
+          medium: 'gmail',
+        })
+        const gmailCh = gmailChannels[0]
+        if (gmailCh?.outreach_channel_id) {
+          channels.push({
+            medium: 'gmail',
+            outreach_channel_id: gmailCh.outreach_channel_id,
+            outreach_template_id: payload.email.templateId,
+            variable_mapping: payload.email.variableMapping,
+          })
         }
       }
 
-      const prevSent = campaign?.sentCount ?? 0
-      const prevFailed = campaign?.failedCount ?? 0
+      if (!channels.length) {
+        throw new Error('No connected channels configured for send')
+      }
 
-      try {
-        const row = await updateOutreachCampaign({
-          outreach_campaign_id: payload.campaignId,
-          org_id: resolveOrgId(),
-          status: 'active',
-          sent_count: prevSent + sent,
-          failed_count: prevFailed + failed,
-          recipient_count: payload.influencerIds.length,
+      const summary = await sendOutreachCampaign({
+        outreach_campaign_id: payload.campaignId,
+        org_id: resolveOrgId(),
+        channels,
+      })
+
+      const sent = summary?.sent ?? 0
+      const failed = summary?.failed ?? 0
+
+      if (summary?.campaign) {
+        dispatch({
+          type: 'MERGE_OUTREACH_CAMPAIGNS',
+          campaigns: [summary.campaign],
         })
-        if (row) {
-          dispatch({ type: 'MERGE_OUTREACH_CAMPAIGNS', campaigns: [row] })
-        }
-      } catch {
-        /* counts may refresh on next poll */
       }
 
       await doLiveSync()

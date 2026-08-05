@@ -924,6 +924,41 @@ export async function createOutreachCampaign(input: {
   return res.data
 }
 
+export type OutreachCampaignSendSummary = {
+  outreach_campaign_id: string
+  org_id: string
+  recipient_count: number
+  sent: number
+  failed: number
+  skipped: number
+  results?: Array<Record<string, unknown>>
+  campaign?: OutreachCampaignRow
+}
+
+export async function sendOutreachCampaign(input: {
+  outreach_campaign_id: string
+  org_id?: string
+  channels?: Array<{
+    medium: 'whatsapp' | 'gmail' | 'email'
+    outreach_channel_id: string
+    outreach_template_id: string
+    variable_mapping?: Record<string, string>
+  }>
+}) {
+  const res = await request<ApiSuccess<OutreachCampaignSendSummary>>(
+    '/outreach/campaigns/send',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
+        outreach_campaign_id: input.outreach_campaign_id,
+        channels: input.channels,
+      }),
+    },
+  )
+  return res.data
+}
+
 export async function listOutreachThreads(input?: {
   org_id?: string
   medium?: string

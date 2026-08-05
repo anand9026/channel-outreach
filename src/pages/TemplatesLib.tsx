@@ -14,6 +14,7 @@ import {
   type MetaTemplate,
   type OutreachTemplateRow,
 } from '../lib/api'
+import { formatOutreachTimestamp } from '../lib/outreach-timestamp'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 type Row = {
@@ -58,9 +59,10 @@ function registryRow(t: OutreachTemplateRow): Row {
     body,
     variables,
     status: (t.status || 'ACTIVE').toUpperCase(),
-    updatedAt: t.date_modified
-      ? new Date(t.date_modified).toISOString()
-      : String(t.date_added || ''),
+    updatedAt:
+      formatOutreachTimestamp(t.date_modified) ||
+      formatOutreachTimestamp(t.date_added) ||
+      '',
   }
 }
 
@@ -401,7 +403,14 @@ export function TemplatesLib() {
         </div>
       )}
 
-      <CreateTemplateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreateTemplateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => {
+          void loadRegistry()
+          void loadGmail()
+        }}
+      />
     </div>
   )
 }
