@@ -1,6 +1,16 @@
 export type OutreachChannel = 'whatsapp' | 'email' | 'instagram'
 export type TemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION'
 export type TemplateStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISABLED' | 'ACTIVE'
+
+export function isWhatsAppTemplateSendable(t: Template): boolean {
+  return t.channel === 'whatsapp' && String(t.status).toUpperCase() === 'APPROVED'
+}
+
+export function isEmailTemplateSendable(t: Template): boolean {
+  if (t.channel !== 'email') return false
+  const status = String(t.status).toUpperCase()
+  return status === 'ACTIVE' || status === 'APPROVED'
+}
 export type ConversationStatus = 'open' | 'pending' | 'resolved'
 export type MessageDirection = 'outbound' | 'inbound'
 export type DeliveryStatus =

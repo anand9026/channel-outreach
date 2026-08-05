@@ -40,10 +40,12 @@ import {
   listOutreachChannels,
   listOutreachCollections,
   listOutreachCollectionInfluencers,
+  listOutreachTemplates,
   listOutreachThreadMessages,
   listOutreachThreads,
   listWhatsAppInbox,
   resolveOrgId,
+  syncOutreachWhatsAppTemplates,
   sendGmailMessage,
   sendGmailTemplate,
   sendWhatsAppTemplate,
@@ -60,31 +62,33 @@ import {
   type OutreachCollectionRow,
   type OutreachCollectionInfluencerRow,
   type OutreachMessageRow,
+  type OutreachTemplateRow,
   type OutreachMessageAttachment,
   type OutreachThreadRow,
 } from '../lib/api'
-import type {
-  AudienceSource,
-  Brand,
-  Campaign,
-  CampaignAnalytics,
-  CampaignChannel,
-  CascadeOptions,
-  CollectionList,
-  ConnectionMode,
-  Conversation,
-  DeliveryStatus,
-  EmailAccount,
-  EmailProvider,
-  Influencer,
-  InstagramAccount,
-  Message,
-  OutreachChannel,
-  TabId,
-  Template,
-  TemplateCategory,
-  VariableBinding,
-  WhatsAppNumber,
+import {
+  isWhatsAppTemplateSendable,
+  type AudienceSource,
+  type Brand,
+  type Campaign,
+  type CampaignAnalytics,
+  type CampaignChannel,
+  type CascadeOptions,
+  type CollectionList,
+  type ConnectionMode,
+  type Conversation,
+  type DeliveryStatus,
+  type EmailAccount,
+  type EmailProvider,
+  type Influencer,
+  type InstagramAccount,
+  type Message,
+  type OutreachChannel,
+  type TabId,
+  type Template,
+  type TemplateCategory,
+  type VariableBinding,
+  type WhatsAppNumber,
 } from '../types'
 
 export interface ToastItem {
@@ -272,6 +276,7 @@ type Action =
       collectionId: string
       influencers: Influencer[]
     }
+  | { type: 'HYDRATE_OUTREACH_TEMPLATES'; templates: OutreachTemplateRow[] }
   | {
       type: 'CREATE_COLLECTION'
       payload: { name: string; brandId: string | null; influencerIds: string[] }
@@ -479,6 +484,62 @@ function mapOutreachCollectionInfluencerRow(
     email: row.email,
     followers: row.followers,
     niche: row.niche,
+  }
+}
+
+function mapOutreachTemplateStatus(status: string | undefined): Template['status'] {
+  const key = String(status || '').toLowerCase()
+  if (key === 'approved') return 'APPROVED'
+  if (key === 'rejected') return 'REJECTED'
+  if (key === 'archived') return 'DISABLED'
+  if (key === 'active') return 'ACTIVE'
+  if (key === 'pending') return 'PENDING'
+  return 'DRAFT'
+}
+
+function mapRegistryMedium(medium: string): OutreachChannel {
+  const m = (medium || '').toLowerCase()
+  if (m.includes('gmail') || m === 'email') return 'email'
+  if (m.includes('instagram') || m === 'ig') return 'instagram'
+  return 'whatsapp'
+}
+
+function mapOutreachTemplateRow(row: OutreachTemplateRow): Template {
+  const channel = mapRegistryMedium(row.medium)
+  let variables: string[] = []
+  if (row.variables_schema && typeof row.variables_schema === 'object') {
+    const vs = row.variables_schema as { slots?: string[]; variables?: string[] }
+    variables = vs.slots || vs.variables || []
+  }
+  const bindings: VariableBinding[] = variables.map((slot, index) => ({
+    slot,
+    field:
+      index === 0
+        ? 'influencer.first_name'
+        : index === 1
+          ? 'influencer.niche'
+          : index === 2
+            ? 'brand.name'
+            : index === 3
+              ? 'campaign.name'
+              : 'org.name',
+  }))
+  const category = String(row.category || 'UTILITY').toUpperCase() as TemplateCategory
+  return {
+    id: row.outreach_template_id,
+    organizationId: row.org_id,
+    brandId: row.brand_id ?? null,
+    channel,
+    name: row.external_name || row.name,
+    category,
+    language: row.language || 'en_US',
+    subject: row.subject_template || undefined,
+    body: row.body_template || '',
+    variables,
+    bindings,
+    status: mapOutreachTemplateStatus(row.status),
+    createdAt: new Date(Number(row.date_added) * 1000).toISOString(),
+    updatedAt: new Date(Number(row.date_modified) * 1000).toISOString(),
   }
 }
 
@@ -1568,6 +1629,20 @@ function reducer(state: AppState, action: Action): AppState {
         collections: state.collections.map((c) =>
           c.id === action.collectionId ? { ...c, influencerIds } : c,
         ),
+      }
+    }
+    case 'HYDRATE_OUTREACH_TEMPLATES': {
+      const mapped = action.templates.map(mapOutreachTemplateRow)
+      const byKey = new Map<string, Template>()
+      for (const t of state.templates) {
+        byKey.set(`${t.channel}:${t.name.toLowerCase()}`, t)
+      }
+      for (const t of mapped) {
+        byKey.set(`${t.channel}:${t.name.toLowerCase()}`, t)
+      }
+      return {
+        ...state,
+        templates: Array.from(byKey.values()),
       }
     }
     case 'MERGE_OUTREACH_CAMPAIGNS': {
@@ -2855,7 +2930,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         if (!template || template.channel !== 'whatsapp') {
           throw new Error('WhatsApp template not found')
         }
-        if (template.status !== 'APPROVED') {
+        if (!isWhatsAppTemplateSendable(template)) {
           throw new Error('WhatsApp template must be approved before sending')
         }
         const bindings = mergeBindings(
@@ -3190,6 +3265,21 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         /* SQL unavailable */
+      })
+    void syncOutreachWhatsAppTemplates({ org_id: org, status: 'APPROVED' })
+      .catch(() => {
+        /* Meta sync best-effort */
+      })
+      .finally(() => {
+        void listOutreachTemplates({ org_id: org, medium: 'whatsapp' })
+          .then((rows) => {
+            if (!cancelled) {
+              dispatch({ type: 'HYDRATE_OUTREACH_TEMPLATES', templates: rows })
+            }
+          })
+          .catch(() => {
+            /* SQL unavailable */
+          })
       })
     return () => {
       cancelled = true

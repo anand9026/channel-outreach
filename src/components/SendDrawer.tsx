@@ -5,7 +5,7 @@ import { firstChannel } from '../lib/cascade'
 import { mergeBindings, renderWithBindings } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import type { CascadeOptions, Template } from '../types'
-import { collectionCreatorCount } from '../types'
+import { collectionCreatorCount, isEmailTemplateSendable, isWhatsAppTemplateSendable } from '../types'
 import { Drawer } from './Drawer'
 
 type SendState = {
@@ -471,12 +471,8 @@ function StepMessage({
 }) {
   const { state } = useWhatsAppStore()
 
-  const waTemplates = state.templates.filter(
-    (t) => t.channel === 'whatsapp' && t.status === 'APPROVED',
-  )
-  const emailTemplates = state.templates.filter(
-    (t) => t.channel === 'email' && (t.status === 'ACTIVE' || t.status === 'APPROVED'),
-  )
+  const waTemplates = state.templates.filter(isWhatsAppTemplateSendable)
+  const emailTemplates = state.templates.filter(isEmailTemplateSendable)
 
   const preview = (tpl: Template | null | undefined) => {
     if (!tpl) return { body: '', subject: '' }

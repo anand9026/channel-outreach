@@ -13,7 +13,7 @@ import {
 } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import type { AudienceSource, CascadeOptions, DataFieldKey, VariableBinding } from '../types'
-import { collectionCreatorCount } from '../types'
+import { collectionCreatorCount, isEmailTemplateSendable, isWhatsAppTemplateSendable } from '../types'
 
 export function CampaignsPage() {
   const { state, actions } = useWhatsAppStore()
@@ -24,10 +24,8 @@ export function CampaignsPage() {
     ? state.brands.find((b) => b.id === campaign.brandId) ?? null
     : null
 
-  const waTemplates = state.templates.filter((t) => t.channel === 'whatsapp' && t.status === 'APPROVED')
-  const emailTemplates = state.templates.filter(
-    (t) => t.channel === 'email' && (t.status === 'ACTIVE' || t.status === 'APPROVED'),
-  )
+  const waTemplates = state.templates.filter(isWhatsAppTemplateSendable)
+  const emailTemplates = state.templates.filter(isEmailTemplateSendable)
 
   const [useWhatsApp, setUseWhatsApp] = useState(mode === 'whatsapp' || mode === 'both' || mode === 'none')
   const [useEmail, setUseEmail] = useState(mode === 'email' || mode === 'both')
