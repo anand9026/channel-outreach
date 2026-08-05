@@ -8,10 +8,13 @@ import type { CascadeOptions, CollectionList, Template } from '../types'
 import { collectionCreatorCount, isEmailTemplateSendable, isWhatsAppTemplateSendable } from '../types'
 import { Drawer } from './Drawer'
 
+type AudienceMode = 'collection' | 'creators' | 'existing_campaign'
+
 type SendState = {
   step: 0 | 1 | 2 | 3
   audience: string[] // influencer ids
   audienceLabel: string
+  audienceMode: AudienceMode
   selectedCollectionId: string | null
   channels: { wa: boolean; email: boolean }
   waTemplateId: string | null
@@ -20,6 +23,18 @@ type SendState = {
   cascade: CascadeOptions
   campaignId: string | null
   campaignName: string
+}
+
+function campaignRecipientDisplay(
+  camp: { recipientCount?: number; collectionId?: string | null; influencerIds: string[] },
+  collections: CollectionList[],
+): number {
+  if ((camp.recipientCount ?? 0) > 0) return camp.recipientCount!
+  if (camp.collectionId) {
+    const col = collections.find((c) => c.id === camp.collectionId)
+    if (col) return collectionCreatorCount(col)
+  }
+  return camp.influencerIds.length
 }
 
 /** Hand-picked or existing-campaign influencer ids; collections resolve on the server. */
@@ -31,17 +46,22 @@ function resolveSendAudienceIds(s: SendState): string[] {
 function resolveSendRecipientCount(
   s: SendState,
   collections: CollectionList[],
-  campaigns: { id: string; influencerIds: string[]; recipientCount?: number }[],
+  campaigns: { id: string; influencerIds: string[]; recipientCount?: number; collectionId?: string | null }[],
 ): number {
-  if (s.selectedCollectionId) {
+  if (s.audienceMode === 'collection' && s.selectedCollectionId) {
     const col = collections.find((c) => c.id === s.selectedCollectionId)
     if (col) return collectionCreatorCount(col)
   }
   if (s.audience.length > 0) return s.audience.length
-  if (s.campaignId) {
+  if (s.audienceMode === 'existing_campaign' && s.campaignId) {
     const camp = campaigns.find((c) => c.id === s.campaignId)
     if (!camp) return 0
-    return camp.recipientCount ?? camp.influencerIds.length
+    if ((camp.recipientCount ?? 0) > 0) return camp.recipientCount!
+    if (camp.collectionId) {
+      const col = collections.find((c) => c.id === camp.collectionId)
+      if (col) return collectionCreatorCount(col)
+    }
+    return camp.influencerIds.length
   }
   return 0
 }
@@ -49,28 +69,61 @@ function resolveSendRecipientCount(
 function isStep0AudienceReady(
   s: SendState,
   collections: CollectionList[],
-  campaigns: { id: string; influencerIds: string[]; recipientCount?: number }[],
+  campaigns: { id: string; influencerIds: string[]; recipientCount?: number; collectionId?: string | null }[],
 ): boolean {
   if (!s.campaignName.trim()) return false
-  if (s.selectedCollectionId) {
+  if (s.audienceMode === 'existing_campaign' && s.campaignId) {
+    const camp = campaigns.find((c) => c.id === s.campaignId)
+    if (!camp) return false
+    if ((camp.recipientCount ?? 0) > 0 || camp.influencerIds.length > 0) return true
+    if (camp.collectionId) {
+      const col = collections.find((c) => c.id === camp.collectionId)
+      return Boolean(col && collectionCreatorCount(col) > 0)
+    }
+    return true
+  }
+  if (s.audienceMode === 'collection' && s.selectedCollectionId) {
     const col = collections.find((c) => c.id === s.selectedCollectionId)
     return Boolean(col && collectionCreatorCount(col) > 0)
   }
-  if (s.audience.length > 0) return true
-  if (s.campaignId) {
-    const camp = campaigns.find((c) => c.id === s.campaignId)
-    return Boolean(
-      camp &&
-        ((camp.recipientCount ?? 0) > 0 || camp.influencerIds.length > 0),
-    )
-  }
+  if (s.audienceMode === 'creators' && s.audience.length > 0) return true
   return false
 }
 
-const defaultState = (campaignId: string | null, campaignName: string): SendState => ({
-  step: 0,
+function buildCreateCampaignPayload(s: SendState) {
+  if (s.audienceMode === 'existing_campaign' && s.campaignId) {
+    return null
+  }
+  if (s.audienceMode === 'collection' && s.selectedCollectionId) {
+    return {
+      name: s.campaignName.trim(),
+      brandId: null as string | null,
+      audienceSource: 'collection' as const,
+      collectionId: s.selectedCollectionId,
+      influencerIds: [] as string[],
+    }
+  }
+  if (s.audienceMode === 'creators' && s.audience.length > 0) {
+    return {
+      name: s.campaignName.trim(),
+      brandId: null as string | null,
+      audienceSource: 'my_creators' as const,
+      collectionId: null as string | null,
+      influencerIds: s.audience,
+    }
+  }
+  return null
+}
+
+const defaultState = (
+  campaignId: string | null,
+  campaignName: string,
+  opts?: { existingCampaign?: boolean },
+): SendState => ({
+  step: opts?.existingCampaign && campaignId ? 1 : 0,
   audience: [],
-  audienceLabel: '',
+  audienceLabel: campaignName,
+  audienceMode: opts?.existingCampaign && campaignId ? 'existing_campaign' : 'collection',
   selectedCollectionId: null,
   channels: { wa: true, email: false },
   waTemplateId: null,
@@ -92,16 +145,22 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
   const { state, actions } = useWhatsAppStore()
   const mode = connectionMode(state)
   const [s, setS] = useState<SendState>(() =>
-    defaultState(presetCampaignId ?? null, presetName ?? ''),
+    defaultState(presetCampaignId ?? null, presetName ?? '', {
+      existingCampaign: Boolean(presetCampaignId),
+    }),
   )
+  const [advancing, setAdvancing] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    setS(defaultState(presetCampaignId ?? null, presetName ?? ''))
+    setS(
+      defaultState(presetCampaignId ?? null, presetName ?? '', {
+        existingCampaign: Boolean(presetCampaignId),
+      }),
+    )
     void actions.refreshOutreachTemplates().catch(() => {
       /* SQL unavailable */
     })
-    // Reset only when the drawer opens — not when store actions refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, presetCampaignId, presetName])
 
@@ -153,23 +212,48 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
   const canLiveApi =
     (canLiveWhatsApp || canLiveEmail) && s.strategy === 'single' && !isCascadePreview
 
+  const advanceStep = async () => {
+    if (s.step !== 0) {
+      setS((prev) => ({ ...prev, step: (prev.step + 1) as 0 | 1 | 2 | 3 }))
+      return
+    }
+
+    if (s.campaignId) {
+      setS((prev) => ({ ...prev, step: 1 }))
+      return
+    }
+
+    const payload = buildCreateCampaignPayload(s)
+    if (!payload) {
+      actions.toast('Choose an audience before continuing', 'error')
+      return
+    }
+
+    setAdvancing(true)
+    try {
+      const campId = await actions.createOutreachCampaign(payload)
+      if (!campId) {
+        actions.toast('Could not save outreach campaign', 'error')
+        return
+      }
+      setS((prev) => ({ ...prev, campaignId: campId, step: 1 }))
+    } catch (e) {
+      actions.toast(
+        e instanceof Error ? e.message : 'Could not save outreach campaign',
+        'error',
+      )
+    } finally {
+      setAdvancing(false)
+    }
+  }
+
   const send = async () => {
     if (sending) return
     setSending(true)
     try {
-      let campId = s.campaignId
+      const campId = s.campaignId
       if (!campId) {
-        campId = await actions.createOutreachCampaign({
-          name: s.campaignName || 'Untitled outreach',
-          brandId: null,
-          audienceSource: s.selectedCollectionId ? 'collection' : 'my_creators',
-          collectionId: s.selectedCollectionId,
-          influencerIds: audienceIds,
-        })
-      }
-      const id = campId || state.selectedCampaignId
-      if (!id) {
-        actions.toast('Could not create campaign — try again', 'error')
+        actions.toast('Save the campaign first (go back to step 1)', 'error')
         return
       }
 
@@ -195,38 +279,49 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
             : undefined
 
         if (whatsapp || email) {
-          const { sent, failed } = await actions.sendOutreachCampaignLive({
-            campaignId: id,
-            whatsapp,
-            email,
-          })
-          const channels: string[] = []
-          if (whatsapp) channels.push('WhatsApp')
-          if (email) channels.push('Email')
-          if (sent > 0) {
+          try {
+            const { sent, failed } = await actions.sendOutreachCampaignLive({
+              campaignId: campId,
+              whatsapp,
+              email,
+            })
+            const channels: string[] = []
+            if (whatsapp) channels.push('WhatsApp')
+            if (email) channels.push('Email')
+            if (sent > 0) {
+              actions.toast(
+                `Sent ${sent} message${sent === 1 ? '' : 's'} via ${channels.join(' + ')} · org ${resolveOrgId()}`,
+                failed > 0 ? 'info' : 'success',
+              )
+            } else {
+              actions.toast(
+                failed > 0
+                  ? 'Send failed — check templates, channels, and collection contacts'
+                  : 'No messages sent — check templates and connected channels',
+                'error',
+              )
+            }
+            close()
+          } catch (e) {
             actions.toast(
-              `Sent ${sent} message${sent === 1 ? '' : 's'} via ${channels.join(' + ')} · org ${resolveOrgId()}`,
-              failed > 0 ? 'info' : 'success',
+              e instanceof Error ? e.message : 'Campaign send failed',
+              'error',
             )
-          } else {
-            actions.toast('No messages sent — check templates and connected channels', 'error')
           }
-          close()
           return
         }
       }
 
       const useCascade = isCascadePreview
       let demoAudienceIds = audienceIds
-      if (
-        !demoAudienceIds.length &&
-        s.selectedCollectionId &&
-        recipientCount > 0
-      ) {
+      const rosterCollectionId =
+        s.selectedCollectionId ??
+        (s.audienceMode === 'existing_campaign'
+          ? state.campaigns.find((c) => c.id === campId)?.collectionId ?? null
+          : null)
+      if (!demoAudienceIds.length && rosterCollectionId && recipientCount > 0) {
         try {
-          demoAudienceIds = await actions.loadCollectionInfluencers(
-            s.selectedCollectionId,
-          )
+          demoAudienceIds = await actions.loadCollectionInfluencers(rosterCollectionId)
         } catch {
           actions.toast(
             'Could not load collection roster for demo send',
@@ -241,7 +336,7 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
       }
 
       actions.prepareAndSend({
-        campaignId: id,
+        campaignId: campId,
         influencerIds: demoAudienceIds,
         whatsapp:
           s.channels.wa && waNumber && s.waTemplateId
@@ -303,11 +398,17 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
             <button
               type="button"
               className="rx-btn primary"
-              disabled={!canNext}
-              onClick={() => setS({ ...s, step: (s.step + 1) as 0 | 1 | 2 | 3 })}
+              disabled={!canNext || advancing}
+              onClick={() => void advanceStep()}
               data-testid="send-next"
             >
-              Continue &rarr;
+              {advancing ? (
+                <>
+                  <Loader2 size={14} className="rx-spin" /> Saving…
+                </>
+              ) : (
+                <>Continue &rarr;</>
+              )}
             </button>
           ) : (
             <button
@@ -366,35 +467,52 @@ function StepAudience({
   const [tab, setTab] = useState<'collections' | 'creators' | 'campaign'>('collections')
 
   const toggle = (id: string) => {
-    setS({
-      ...s,
+    setS((prev) => ({
+      ...prev,
+      audienceMode: 'creators',
       selectedCollectionId: null,
-      audience: s.audience.includes(id)
-        ? s.audience.filter((x) => x !== id)
-        : [...s.audience, id],
-    })
+      campaignId: null,
+      audience: prev.audience.includes(id)
+        ? prev.audience.filter((x) => x !== id)
+        : [...prev.audience, id],
+    }))
   }
 
   const selectCollection = (colId: string) => {
     setS((prev) => {
       const col = state.collections.find((c) => c.id === colId)
       if (!col) return prev
-      if (prev.selectedCollectionId === colId) {
+      if (prev.audienceMode === 'collection' && prev.selectedCollectionId === colId) {
         return {
           ...prev,
+          audienceMode: 'collection',
           selectedCollectionId: null,
           audience: [],
           audienceLabel: '',
+          campaignId: null,
         }
       }
       return {
         ...prev,
+        audienceMode: 'collection',
         selectedCollectionId: col.id,
         audience: [],
         audienceLabel: col.name,
         campaignId: null,
       }
     })
+  }
+
+  const selectExistingCampaign = (camp: (typeof state.campaigns)[number]) => {
+    setS((prev) => ({
+      ...prev,
+      audienceMode: 'existing_campaign',
+      campaignId: camp.id,
+      selectedCollectionId: camp.collectionId ?? null,
+      audience: camp.influencerIds,
+      audienceLabel: camp.name,
+      campaignName: camp.name,
+    }))
   }
 
   const recipientCount = resolveSendRecipientCount(
@@ -449,7 +567,8 @@ function StepAudience({
             <p className="rx-step-desc">No collections found for this org.</p>
           ) : null}
           {state.collections.map((c) => {
-            const sel = s.selectedCollectionId === c.id
+            const sel =
+              s.audienceMode === 'collection' && s.selectedCollectionId === c.id
             return (
               <button
                 key={c.id}
@@ -503,27 +622,25 @@ function StepAudience({
 
       {tab === 'campaign' && (
         <div className="rx-list">
-          {state.campaigns.map((c) => (
+          {state.campaigns
+            .filter((c) => c.source === 'db')
+            .map((c) => (
             <button
               key={c.id}
               type="button"
-              className={`rx-list-item${s.campaignId === c.id ? ' is-selected' : ''}`}
-              onClick={() =>
-                setS({
-                  ...s,
-                  campaignId: c.id,
-                  audience: c.influencerIds,
-                  audienceLabel: c.name,
-                  campaignName: c.name,
-                })
-              }
+              className={`rx-list-item${s.audienceMode === 'existing_campaign' && s.campaignId === c.id ? ' is-selected' : ''}`}
+              onClick={() => selectExistingCampaign(c)}
             >
-              <div className={`rx-check${s.campaignId === c.id ? ' is-checked' : ''}`}>
-                {s.campaignId === c.id ? <CheckCircle2 size={12} /> : null}
+              <div className={`rx-check${s.audienceMode === 'existing_campaign' && s.campaignId === c.id ? ' is-checked' : ''}`}>
+                {s.audienceMode === 'existing_campaign' && s.campaignId === c.id ? (
+                  <CheckCircle2 size={12} />
+                ) : null}
               </div>
               <div style={{ flex: 1 }}>
                 <div className="rx-list-name">{c.name}</div>
-                <div className="rx-list-sub">{c.influencerIds.length} creators · {c.status}</div>
+                <div className="rx-list-sub">
+                  {campaignRecipientDisplay(c, state.collections)} creators · {c.status}
+                </div>
               </div>
             </button>
           ))}
@@ -532,13 +649,21 @@ function StepAudience({
 
       <div className="rx-mt-6 rx-text-2 rx-text-sm">
         <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6 }} />
-        {s.selectedCollectionId && recipientCount > 0 ? (
+        {s.audienceMode === 'collection' && s.selectedCollectionId && recipientCount > 0 ? (
           <>
             <strong>{state.collections.find((c) => c.id === s.selectedCollectionId)?.name ?? 'Collection'}</strong>
             {' · '}
             <strong>{recipientCount}</strong> creator
             {recipientCount === 1 ? '' : 's'}
             <span className="rx-caption"> · roster resolved at send</span>
+          </>
+        ) : s.audienceMode === 'existing_campaign' && s.campaignId && recipientCount > 0 ? (
+          <>
+            Reusing campaign{' '}
+            <strong>{state.campaigns.find((c) => c.id === s.campaignId)?.name ?? 'selected'}</strong>
+            {' · '}
+            <strong>{recipientCount}</strong> creator
+            {recipientCount === 1 ? '' : 's'}
           </>
         ) : recipientCount > 0 ? (
           <>
@@ -954,7 +1079,14 @@ function StepReview({
                 <strong>Subject:</strong> {email.subject}
               </div>
             ) : null}
-            {email.body}
+            <div
+              className="rx-tpl-pv-html"
+              dangerouslySetInnerHTML={{
+                __html: email.body.includes('<')
+                  ? email.body
+                  : email.body.replace(/\n/g, '<br>'),
+              }}
+            />
           </div>
         </>
       )}
