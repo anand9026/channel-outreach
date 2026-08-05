@@ -22,23 +22,49 @@ type SendState = {
   campaignName: string
 }
 
-/** Resolve influencer ids from local selection or loaded collection roster. */
-function resolveSendAudienceIds(
-  s: SendState,
-  collections: CollectionList[],
-): string[] {
-  if (s.audience.length > 0) return s.audience
-  if (!s.selectedCollectionId) return []
-  const col = collections.find((c) => c.id === s.selectedCollectionId)
-  return col?.influencerIds ?? []
+/** Hand-picked or existing-campaign influencer ids; collections resolve on the server. */
+function resolveSendAudienceIds(s: SendState): string[] {
+  return s.audience
 }
 
-function isAudienceStillLoading(s: SendState, collections: CollectionList[]): boolean {
-  if (s.audience.length > 0) return false
-  if (!s.selectedCollectionId) return false
-  const col = collections.find((c) => c.id === s.selectedCollectionId)
-  if (!col) return false
-  return col.influencerIds.length === 0 && collectionCreatorCount(col) > 0
+/** Display + review count: SQL collection count, or explicit selection length. */
+function resolveSendRecipientCount(
+  s: SendState,
+  collections: CollectionList[],
+  campaigns: { id: string; influencerIds: string[]; recipientCount?: number }[],
+): number {
+  if (s.audience.length > 0) return s.audience.length
+  if (s.selectedCollectionId) {
+    const col = collections.find((c) => c.id === s.selectedCollectionId)
+    return col ? collectionCreatorCount(col) : 0
+  }
+  if (s.campaignId) {
+    const camp = campaigns.find((c) => c.id === s.campaignId)
+    if (!camp) return 0
+    return camp.recipientCount ?? camp.influencerIds.length
+  }
+  return 0
+}
+
+function isStep0AudienceReady(
+  s: SendState,
+  collections: CollectionList[],
+  campaigns: { id: string; influencerIds: string[]; recipientCount?: number }[],
+): boolean {
+  if (!s.campaignName.trim()) return false
+  if (s.selectedCollectionId) {
+    const col = collections.find((c) => c.id === s.selectedCollectionId)
+    return Boolean(col && collectionCreatorCount(col) > 0)
+  }
+  if (s.audience.length > 0) return true
+  if (s.campaignId) {
+    const camp = campaigns.find((c) => c.id === s.campaignId)
+    return Boolean(
+      camp &&
+        ((camp.recipientCount ?? 0) > 0 || camp.influencerIds.length > 0),
+    )
+  }
+  return false
 }
 
 const defaultState = (campaignId: string | null, campaignName: string): SendState => ({
@@ -75,27 +101,17 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
     }
   }, [open, presetCampaignId, presetName])
 
-  // Keep send state in sync when collection influencers finish loading in the store.
-  useEffect(() => {
-    if (!s.selectedCollectionId || s.audience.length > 0) return
-    const col = state.collections.find((c) => c.id === s.selectedCollectionId)
-    if (!col?.influencerIds.length) return
-    setS((prev) =>
-      prev.selectedCollectionId === s.selectedCollectionId
-        ? { ...prev, audience: col.influencerIds }
-        : prev,
-    )
-  }, [state.collections, s.selectedCollectionId, s.audience.length])
-
-  const audienceIds = resolveSendAudienceIds(s, state.collections)
-  const audienceLoading = isAudienceStillLoading(s, state.collections)
+  const audienceIds = resolveSendAudienceIds(s)
+  const recipientCount = resolveSendRecipientCount(
+    s,
+    state.collections,
+    state.campaigns,
+  )
 
   const totalSteps = 4
   const canNext =
     s.step === 0
-      ? audienceIds.length > 0 &&
-        !audienceLoading &&
-        s.campaignName.trim().length > 0
+      ? isStep0AudienceReady(s, state.collections, state.campaigns)
       : s.step === 1
         ? (s.channels.wa ? Boolean(s.waTemplateId) : true) &&
           (s.channels.email ? Boolean(s.emailTemplateId) : true) &&
@@ -177,7 +193,6 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
         if (whatsapp || email) {
           const { sent, failed } = await actions.sendOutreachCampaignLive({
             campaignId: id,
-            influencerIds: audienceIds,
             whatsapp,
             email,
           })
@@ -198,9 +213,32 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
       }
 
       const useCascade = isCascadePreview
+      let demoAudienceIds = audienceIds
+      if (
+        !demoAudienceIds.length &&
+        s.selectedCollectionId &&
+        recipientCount > 0
+      ) {
+        try {
+          demoAudienceIds = await actions.loadCollectionInfluencers(
+            s.selectedCollectionId,
+          )
+        } catch {
+          actions.toast(
+            'Could not load collection roster for demo send',
+            'error',
+          )
+          return
+        }
+      }
+      if (!demoAudienceIds.length) {
+        actions.toast('Select at least one creator to send', 'error')
+        return
+      }
+
       actions.prepareAndSend({
         campaignId: id,
-        influencerIds: audienceIds,
+        influencerIds: demoAudienceIds,
         whatsapp:
           s.channels.wa && waNumber && s.waTemplateId
             ? {
@@ -221,10 +259,10 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
       })
       actions.toast(
         useCascade
-          ? `Demo sequence queued (${audienceIds.length} creators) — cascade simulates locally`
+          ? `Demo sequence queued (${demoAudienceIds.length} creators) — cascade simulates locally`
           : s.channels.email
-            ? `Demo delivery queued (${audienceIds.length} creators) — connect Gmail for live sends`
-            : `Outreach queued to ${audienceIds.length} creator${audienceIds.length > 1 ? 's' : ''}`,
+            ? `Demo delivery queued (${demoAudienceIds.length} creators) — connect Gmail for live sends`
+            : `Outreach queued to ${demoAudienceIds.length} creator${demoAudienceIds.length > 1 ? 's' : ''}`,
         'info',
       )
       close()
@@ -305,7 +343,9 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
       {s.step === 0 && <StepAudience s={s} setS={setS} />}
       {s.step === 1 && <StepMessage s={s} setS={setS} mode={mode} />}
       {s.step === 2 && <StepStrategy s={s} setS={setS} />}
-      {s.step === 3 && <StepReview s={s} audienceIds={audienceIds} />}
+      {s.step === 3 && (
+        <StepReview s={s} recipientCount={recipientCount} />
+      )}
     </Drawer>
   )
 }
@@ -318,9 +358,8 @@ function StepAudience({
   s: SendState
   setS: Dispatch<SetStateAction<SendState>>
 }) {
-  const { state, actions } = useWhatsAppStore()
+  const { state } = useWhatsAppStore()
   const [tab, setTab] = useState<'collections' | 'creators' | 'campaign'>('collections')
-  const [loadingCollectionId, setLoadingCollectionId] = useState<string | null>(null)
 
   const toggle = (id: string) => {
     setS({
@@ -338,26 +377,17 @@ function StepAudience({
     setS({
       ...s,
       selectedCollectionId: col.id,
-      audience: col.influencerIds,
+      audience: [],
       audienceLabel: col.name,
+      campaignId: null,
     })
-    if (col.influencerIds.length > 0) return
-
-    setLoadingCollectionId(colId)
-    void actions
-      .loadCollectionInfluencers(colId)
-      .then((ids) => {
-        setS((prev) =>
-          prev.selectedCollectionId === colId ? { ...prev, audience: ids } : prev,
-        )
-      })
-      .catch(() => {
-        /* keep empty audience */
-      })
-      .finally(() => {
-        setLoadingCollectionId((current) => (current === colId ? null : current))
-      })
   }
+
+  const recipientCount = resolveSendRecipientCount(
+    s,
+    state.collections,
+    state.campaigns,
+  )
 
   return (
     <>
@@ -420,9 +450,8 @@ function StepAudience({
                 <div style={{ flex: 1 }}>
                   <div className="rx-list-name">{c.name}</div>
                   <div className="rx-list-sub">
-                    {loadingCollectionId === c.id
-                      ? 'Loading creators…'
-                      : `${collectionCreatorCount(c)} creators`}
+                    {collectionCreatorCount(c)} creator
+                    {collectionCreatorCount(c) === 1 ? '' : 's'}
                   </div>
                 </div>
               </button>
@@ -489,10 +518,10 @@ function StepAudience({
 
       <div className="rx-mt-6 rx-text-2 rx-text-sm">
         <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6 }} />
-        <strong>{resolveSendAudienceIds(s, state.collections).length}</strong> creator
-        {resolveSendAudienceIds(s, state.collections).length === 1 ? '' : 's'} selected
-        {isAudienceStillLoading(s, state.collections) ? (
-          <span className="rx-caption"> · loading roster…</span>
+        <strong>{recipientCount}</strong> creator
+        {recipientCount === 1 ? '' : 's'} selected
+        {s.selectedCollectionId ? (
+          <span className="rx-caption"> · roster resolved at send</span>
         ) : null}
       </div>
     </>
@@ -783,7 +812,13 @@ function StepStrategy({ s, setS }: { s: SendState; setS: (s: SendState) => void 
 }
 
 /* ---------------------- Step 3 : Review ---------------------- */
-function StepReview({ s, audienceIds }: { s: SendState; audienceIds: string[] }) {
+function StepReview({
+  s,
+  recipientCount,
+}: {
+  s: SendState
+  recipientCount: number
+}) {
   const { state } = useWhatsAppStore()
   const wa = state.templates.find((t) => t.id === s.waTemplateId)
   const email = state.templates.find((t) => t.id === s.emailTemplateId)
@@ -824,7 +859,7 @@ function StepReview({ s, audienceIds }: { s: SendState; audienceIds: string[] })
 
     const rows: { label: string; value: string }[] = [
       { label: 'Outreach', value: s.campaignName || '—' },
-      { label: 'Recipients', value: `${audienceIds.length} creator${audienceIds.length === 1 ? '' : 's'}` },
+      { label: 'Recipients', value: `${recipientCount} creator${recipientCount === 1 ? '' : 's'}` },
       { label: 'Delivery', value: delivery },
       {
         label: 'Channels',
@@ -838,7 +873,7 @@ function StepReview({ s, audienceIds }: { s: SendState; audienceIds: string[] })
       { label: 'Strategy', value: s.strategy === 'cascade' ? 'Smart sequence' : 'Send now' },
     ]
     return rows
-  }, [s, audienceIds, liveWaOnly, liveEmailOnly, liveBoth])
+  }, [s, recipientCount, liveWaOnly, liveEmailOnly, liveBoth])
 
   return (
     <>

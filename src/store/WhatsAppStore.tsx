@@ -2522,7 +2522,7 @@ interface StoreContextValue {
     }) => Promise<string | null>
     sendOutreachCampaignLive: (payload: {
       campaignId: string
-      influencerIds: string[]
+      influencerIds?: string[]
       whatsapp?: {
         phoneNumberId: string
         templateId: string
@@ -2537,7 +2537,7 @@ interface StoreContextValue {
     /** @deprecated use sendOutreachCampaignLive */
     sendOutreachLive: (payload: {
       campaignId: string
-      influencerIds: string[]
+      influencerIds?: string[]
       whatsapp: {
         phoneNumberId: string
         templateId: string
@@ -2896,7 +2896,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
   const sendOutreachCampaignLive = useCallback(
     async (payload: {
       campaignId: string
-      influencerIds: string[]
+      influencerIds?: string[]
       whatsapp?: {
         phoneNumberId: string
         templateId: string
@@ -2969,7 +2969,8 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
 
       await doLiveSync()
 
-      for (const influencerId of payload.influencerIds) {
+      const linkInfluencerIds = payload.influencerIds ?? []
+      for (const influencerId of linkInfluencerIds) {
         const conv = stateRef.current.conversations.find(
           (c) =>
             c.influencerId === influencerId &&
@@ -2989,7 +2990,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             type: 'SET_SHARED_INFLUENCERS',
             payload: {
               campaignId: payload.campaignId,
-              influencerIds: payload.influencerIds,
+              influencerIds: linkInfluencerIds,
             },
           })
         } catch {
