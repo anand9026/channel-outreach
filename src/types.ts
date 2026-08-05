@@ -9,7 +9,12 @@ export function isWhatsAppTemplateSendable(t: Template): boolean {
 export function isEmailTemplateSendable(t: Template): boolean {
   if (t.channel !== 'email') return false
   const status = String(t.status).toUpperCase()
-  return status === 'ACTIVE' || status === 'APPROVED'
+  // Org-owned Gmail scripts do not go through Meta review — draft/active are sendable.
+  return (
+    status === 'ACTIVE' ||
+    status === 'APPROVED' ||
+    status === 'DRAFT'
+  )
 }
 export type ConversationStatus = 'open' | 'pending' | 'resolved'
 export type MessageDirection = 'outbound' | 'inbound'

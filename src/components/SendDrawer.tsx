@@ -98,8 +98,11 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
   useEffect(() => {
     if (open) {
       setS(defaultState(presetCampaignId ?? null, presetName ?? ''))
+      void actions.refreshOutreachTemplates().catch(() => {
+        /* SQL unavailable */
+      })
     }
-  }, [open, presetCampaignId, presetName])
+  }, [open, presetCampaignId, presetName, actions])
 
   const audienceIds = resolveSendAudienceIds(s)
   const recipientCount = resolveSendRecipientCount(

@@ -532,7 +532,7 @@ function mapOutreachTemplateRow(row: OutreachTemplateRow): Template {
     category,
     language: row.language || 'en_US',
     subject: row.subject_template || undefined,
-    body: row.body_template || '',
+    body: row.body_template || row.html_template || '',
     variables,
     bindings,
     status: mapOutreachTemplateStatus(row.status),
@@ -1631,8 +1631,12 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'HYDRATE_OUTREACH_TEMPLATES': {
       const mapped = action.templates.map(mapOutreachTemplateRow)
+      const hasSqlEmail = mapped.some((t) => t.channel === 'email')
       const byKey = new Map<string, Template>()
       for (const t of state.templates) {
+        if (hasSqlEmail && t.channel === 'email' && t.id.startsWith('tpl_')) {
+          continue
+        }
         byKey.set(`${t.channel}:${t.name.toLowerCase()}`, t)
       }
       for (const t of mapped) {
@@ -2550,6 +2554,7 @@ interface StoreContextValue {
       influencerIds: string[]
     }) => void
     loadCollectionInfluencers: (collectionId: string) => Promise<string[]>
+    refreshOutreachTemplates: () => Promise<void>
     logWhatsAppSends: (payload: {
       sends: Array<{ to: string; body: string; name?: string; wamid?: string }>
       phoneNumberId?: string
@@ -2879,6 +2884,18 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const refreshOutreachTemplates = useCallback(async () => {
+    const org = resolveOrgId()
+    const [whatsappRows, gmailRows] = await Promise.all([
+      listOutreachTemplates({ org_id: org, medium: 'whatsapp' }),
+      listOutreachTemplates({ org_id: org, medium: 'gmail' }),
+    ])
+    dispatch({
+      type: 'HYDRATE_OUTREACH_TEMPLATES',
+      templates: [...whatsappRows, ...gmailRows],
+    })
+  }, [])
+
   const loadCollectionInfluencers = useCallback(async (collectionId: string) => {
     const rows = await listOutreachCollectionInfluencers({
       collection_id: collectionId,
@@ -3176,15 +3193,9 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         /* Meta sync best-effort */
       })
       .finally(() => {
-        void listOutreachTemplates({ org_id: org, medium: 'whatsapp' })
-          .then((rows) => {
-            if (!cancelled) {
-              dispatch({ type: 'HYDRATE_OUTREACH_TEMPLATES', templates: rows })
-            }
-          })
-          .catch(() => {
-            /* SQL unavailable */
-          })
+        void refreshOutreachTemplates().catch(() => {
+          /* SQL unavailable */
+        })
       })
     return () => {
       cancelled = true
@@ -3576,6 +3587,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         toast('Collection list created', 'success')
       },
       loadCollectionInfluencers,
+      refreshOutreachTemplates,
       logWhatsAppSends: (payload) => {
         dispatch({ type: 'LOG_WHATSAPP_SENDS', payload })
       },

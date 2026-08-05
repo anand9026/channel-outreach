@@ -300,15 +300,7 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         subject_template: subject.trim(),
         html_template: body.trim(),
       })
-      actions.submitTemplate({
-        channel: 'email',
-        name: name.trim(),
-        category,
-        subject: subject.trim(),
-        body: body.trim(),
-        bindings: [],
-        brandId: null,
-      })
+      await actions.refreshOutreachTemplates()
       actions.toast(`Saved Gmail template ${name.trim()}`, 'success')
       reset()
       onCreated?.()
