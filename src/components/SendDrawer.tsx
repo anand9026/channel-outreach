@@ -1,16 +1,18 @@
 import { CheckCircle2, Clock, Loader2, MessageCircle, Mail, Users, Zap } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { resolveOrgId } from '../lib/api'
 import { firstChannel } from '../lib/cascade'
 import { mergeBindings, renderWithBindings } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import type { CascadeOptions, Template } from '../types'
+import { collectionCreatorCount } from '../types'
 import { Drawer } from './Drawer'
 
 type SendState = {
   step: 0 | 1 | 2 | 3
   audience: string[] // influencer ids
   audienceLabel: string
+  selectedCollectionId: string | null
   channels: { wa: boolean; email: boolean }
   waTemplateId: string | null
   emailTemplateId: string | null
@@ -24,6 +26,7 @@ const defaultState = (campaignId: string | null, campaignName: string): SendStat
   step: 0,
   audience: [],
   audienceLabel: '',
+  selectedCollectionId: null,
   channels: { wa: true, email: false },
   waTemplateId: null,
   emailTemplateId: null,
@@ -56,7 +59,8 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
   const totalSteps = 4
   const canNext =
     s.step === 0
-      ? s.audience.length > 0 && s.campaignName.trim().length > 0
+      ? (s.audience.length > 0 || Boolean(s.selectedCollectionId)) &&
+        s.campaignName.trim().length > 0
       : s.step === 1
         ? (s.channels.wa ? Boolean(s.waTemplateId) : true) &&
           (s.channels.email ? Boolean(s.emailTemplateId) : true) &&
@@ -103,8 +107,8 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
         campId = await actions.createOutreachCampaign({
           name: s.campaignName || 'Untitled outreach',
           brandId: null,
-          audienceSource: 'my_creators',
-          collectionId: null,
+          audienceSource: s.selectedCollectionId ? 'collection' : 'my_creators',
+          collectionId: s.selectedCollectionId,
           influencerIds: s.audience,
         })
       }
@@ -272,9 +276,16 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
 }
 
 /* ---------------------- Step 0 : Audience ---------------------- */
-function StepAudience({ s, setS }: { s: SendState; setS: (s: SendState) => void }) {
-  const { state } = useWhatsAppStore()
+function StepAudience({
+  s,
+  setS,
+}: {
+  s: SendState
+  setS: Dispatch<SetStateAction<SendState>>
+}) {
+  const { state, actions } = useWhatsAppStore()
   const [tab, setTab] = useState<'collections' | 'creators' | 'campaign'>('collections')
+  const [loadingCollectionId, setLoadingCollectionId] = useState<string | null>(null)
 
   const toggle = (id: string) => {
     setS({
@@ -288,7 +299,28 @@ function StepAudience({ s, setS }: { s: SendState; setS: (s: SendState) => void 
   const selectCollection = (colId: string) => {
     const col = state.collections.find((c) => c.id === colId)
     if (!col) return
-    setS({ ...s, audience: col.influencerIds, audienceLabel: col.name })
+    setS({
+      ...s,
+      selectedCollectionId: col.id,
+      audience: col.influencerIds,
+      audienceLabel: col.name,
+    })
+    if (col.influencerIds.length > 0) return
+
+    setLoadingCollectionId(colId)
+    void actions
+      .loadCollectionInfluencers(colId)
+      .then((ids) => {
+        setS((prev) =>
+          prev.selectedCollectionId === colId ? { ...prev, audience: ids } : prev,
+        )
+      })
+      .catch(() => {
+        /* keep empty audience */
+      })
+      .finally(() => {
+        setLoadingCollectionId((current) => (current === colId ? null : current))
+      })
   }
 
   return (
@@ -333,8 +365,11 @@ function StepAudience({ s, setS }: { s: SendState; setS: (s: SendState) => void 
 
       {tab === 'collections' && (
         <div className="rx-list">
+          {state.collections.length === 0 ? (
+            <p className="rx-step-desc">No collections found for this org.</p>
+          ) : null}
           {state.collections.map((c) => {
-            const sel = s.audienceLabel === c.name
+            const sel = s.selectedCollectionId === c.id
             return (
               <button
                 key={c.id}
@@ -348,7 +383,11 @@ function StepAudience({ s, setS }: { s: SendState; setS: (s: SendState) => void 
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="rx-list-name">{c.name}</div>
-                  <div className="rx-list-sub">{c.influencerIds.length} creators</div>
+                  <div className="rx-list-sub">
+                    {loadingCollectionId === c.id
+                      ? 'Loading creators…'
+                      : `${collectionCreatorCount(c)} creators`}
+                  </div>
                 </div>
               </button>
             )

@@ -13,6 +13,7 @@ import {
 } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import type { AudienceSource, CascadeOptions, DataFieldKey, VariableBinding } from '../types'
+import { collectionCreatorCount } from '../types'
 
 export function CampaignsPage() {
   const { state, actions } = useWhatsAppStore()
@@ -62,6 +63,21 @@ export function CampaignsPage() {
         setCreateMetaTemplates([])
       })
   }, [])
+
+  useEffect(() => {
+    if (!collectionId && state.collections[0]?.id) {
+      setCollectionId(state.collections[0].id)
+    }
+  }, [state.collections, collectionId])
+
+  useEffect(() => {
+    if (audienceSource !== 'collection' || !collectionId) return
+    const col = state.collections.find((c) => c.id === collectionId)
+    if (col && col.influencerIds.length > 0) return
+    void actions.loadCollectionInfluencers(collectionId).catch(() => {
+      /* API unavailable */
+    })
+  }, [audienceSource, collectionId, state.collections, actions])
 
   const waChannel = useMemo(
     () => state.channels.find((ch) => ch.campaignId === campaignId && ch.channel === 'whatsapp'),
@@ -533,7 +549,7 @@ export function CampaignsPage() {
                 >
                   {state.collections.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} ({c.influencerIds.length} creators)
+                      {c.name} ({collectionCreatorCount(c)} creators)
                       {c.brandId
                         ? ` · ${state.brands.find((b) => b.id === c.brandId)?.shortName}`
                         : ' · org'}
@@ -620,7 +636,7 @@ export function CampaignsPage() {
               >
                 <FolderOpen size={14} />
                 {c.name}
-                <span>{c.influencerIds.length}</span>
+                <span>{collectionCreatorCount(c)}</span>
               </button>
             ))}
             <button

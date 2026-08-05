@@ -14,7 +14,6 @@ import {
   seedAnalytics,
   seedBrands,
   seedChannels,
-  seedCollections,
   seedConversations,
   seedEmailAccounts,
   seedInfluencers,
@@ -39,6 +38,8 @@ import {
   listGmailThreads,
   listOutreachCampaigns,
   listOutreachChannels,
+  listOutreachCollections,
+  listOutreachCollectionInfluencers,
   listOutreachThreadMessages,
   listOutreachThreads,
   listWhatsAppInbox,
@@ -56,6 +57,8 @@ import {
   type InboxThread as ApiInboxThread,
   type OutreachCampaignRow,
   type OutreachChannelRow,
+  type OutreachCollectionRow,
+  type OutreachCollectionInfluencerRow,
   type OutreachMessageRow,
   type OutreachMessageAttachment,
   type OutreachThreadRow,
@@ -263,6 +266,12 @@ type Action =
   | { type: 'MERGE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
   | { type: 'HYDRATE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
   | { type: 'HYDRATE_OUTREACH_CHANNELS'; channels: OutreachChannelRow[] }
+  | { type: 'HYDRATE_OUTREACH_COLLECTIONS'; collections: OutreachCollectionRow[] }
+  | {
+      type: 'MERGE_COLLECTION_INFLUENCERS'
+      collectionId: string
+      influencers: Influencer[]
+    }
   | {
       type: 'CREATE_COLLECTION'
       payload: { name: string; brandId: string | null; influencerIds: string[] }
@@ -328,7 +337,7 @@ const initialState: AppState = {
   organization: seedOrganization,
   brands: seedBrands,
   influencers: seedInfluencers,
-  collections: seedCollections,
+  collections: [],
   myCreatorIds: seedMyCreatorIds,
   campaigns: [],
   templates: seedTemplates,
@@ -443,6 +452,33 @@ function mapOutreachCampaignRow(row: OutreachCampaignRow): Campaign {
     recipientCount: Number(row.recipient_count ?? 0),
     description: row.description ?? null,
     source: 'db',
+  }
+}
+
+function mapOutreachCollectionRow(row: OutreachCollectionRow): CollectionList {
+  return {
+    id: row.collection_id,
+    organizationId: row.org_id,
+    brandId: row.brand_id ?? null,
+    name: row.collection_name,
+    campaignId: row.campaign_id ?? null,
+    influencerIds: [],
+    influencerCount: Number(row.influencer_count ?? 0),
+    createdAt: row.date_added || new Date().toISOString(),
+  }
+}
+
+function mapOutreachCollectionInfluencerRow(
+  row: OutreachCollectionInfluencerRow,
+): Influencer {
+  return {
+    id: row.influencer_id,
+    name: row.name,
+    handle: row.handle,
+    phone: row.phone,
+    email: row.email,
+    followers: row.followers,
+    niche: row.niche,
   }
 }
 
@@ -1514,6 +1550,26 @@ function reducer(state: AppState, action: Action): AppState {
         whatsAppNumbers: waNumbers,
       }
     }
+    case 'HYDRATE_OUTREACH_COLLECTIONS': {
+      return {
+        ...state,
+        collections: action.collections.map(mapOutreachCollectionRow),
+      }
+    }
+    case 'MERGE_COLLECTION_INFLUENCERS': {
+      const byId = new Map(state.influencers.map((i) => [i.id, i]))
+      for (const inf of action.influencers) {
+        byId.set(inf.id, inf)
+      }
+      const influencerIds = action.influencers.map((i) => i.id)
+      return {
+        ...state,
+        influencers: Array.from(byId.values()),
+        collections: state.collections.map((c) =>
+          c.id === action.collectionId ? { ...c, influencerIds } : c,
+        ),
+      }
+    }
     case 'MERGE_OUTREACH_CAMPAIGNS': {
       const mapped = action.campaigns.map(mapOutreachCampaignRow)
       const byId = new Map(state.campaigns.map((c) => [c.id, c]))
@@ -2420,6 +2476,7 @@ interface StoreContextValue {
       brandId: string | null
       influencerIds: string[]
     }) => void
+    loadCollectionInfluencers: (collectionId: string) => Promise<string[]>
     logWhatsAppSends: (payload: {
       sends: Array<{ to: string; body: string; name?: string; wamid?: string }>
       phoneNumberId?: string
@@ -2747,6 +2804,20 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         /* Gmail sync errors are non-fatal */
       }
     }
+  }, [])
+
+  const loadCollectionInfluencers = useCallback(async (collectionId: string) => {
+    const rows = await listOutreachCollectionInfluencers({
+      collection_id: collectionId,
+      org_id: resolveOrgId(),
+    })
+    const influencers = rows.map(mapOutreachCollectionInfluencerRow)
+    dispatch({
+      type: 'MERGE_COLLECTION_INFLUENCERS',
+      collectionId,
+      influencers,
+    })
+    return influencers.map((i) => i.id)
   }, [])
 
   const sendOutreachCampaignLive = useCallback(
@@ -3110,6 +3181,15 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         /* fall back to connection endpoint */
+      })
+    void listOutreachCollections(org)
+      .then((rows) => {
+        if (!cancelled) {
+          dispatch({ type: 'HYDRATE_OUTREACH_COLLECTIONS', collections: rows })
+        }
+      })
+      .catch(() => {
+        /* SQL unavailable */
       })
     return () => {
       cancelled = true
@@ -3500,6 +3580,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'CREATE_COLLECTION', payload })
         toast('Collection list created', 'success')
       },
+      loadCollectionInfluencers,
       logWhatsAppSends: (payload) => {
         dispatch({ type: 'LOG_WHATSAPP_SENDS', payload })
       },

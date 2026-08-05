@@ -120,7 +120,13 @@ export interface CollectionList {
   /** Optional link to a marketing/outreach campaign */
   campaignId: string | null
   influencerIds: string[]
+  /** Populated from API before influencer ids are loaded */
+  influencerCount?: number
   createdAt: string
+}
+
+export function collectionCreatorCount(c: CollectionList): number {
+  return c.influencerCount ?? c.influencerIds.length
 }
 
 /**

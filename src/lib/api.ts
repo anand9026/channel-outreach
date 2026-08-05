@@ -642,6 +642,34 @@ export type OutreachMessageRow = {
   date_modified: number
 }
 
+export type OutreachCollectionInfluencerRow = {
+  influencer_id: string
+  name: string
+  handle: string
+  phone: string
+  email: string
+  followers: string
+  followers_raw?: number
+  niche: string
+  platform_id?: string | null
+}
+
+export type OutreachCollectionRow = {
+  collection_id: string
+  collection_name: string
+  collection_type?: string | null
+  org_id: string
+  brand_id?: string | null
+  campaign_id?: string | null
+  campaign_name?: string | null
+  campaign_status?: string | null
+  platform_id?: string | null
+  description?: string | null
+  influencer_count: number
+  date_added?: string | null
+  date_modified?: string | null
+}
+
 export type OutreachCampaignRow = {
   outreach_campaign_id: string
   org_id: string
@@ -796,6 +824,35 @@ export async function updateOutreachCampaign(input: {
     },
   )
   return res.data
+}
+
+export async function listOutreachCollections(org_id?: string, limit?: number) {
+  const q = withOrgParams({ org_id })
+  if (limit) q.set('limit', String(limit))
+  const res = await request<ApiSuccess<{ collections?: OutreachCollectionRow[] }>>(
+    `/outreach/collections?${q.toString()}`,
+  )
+  return res.data?.collections ?? []
+}
+
+export async function listOutreachCollectionInfluencers(input: {
+  collection_id: string
+  org_id?: string
+  platform_id?: string
+  limit?: number
+}) {
+  const q = withOrgParams({ org_id: input.org_id })
+  q.set('collection_id', input.collection_id)
+  if (input.platform_id) q.set('platform_id', input.platform_id)
+  if (input.limit) q.set('limit', String(input.limit))
+  const res = await request<
+    ApiSuccess<{
+      collection_id?: string
+      org_id?: string
+      influencers?: OutreachCollectionInfluencerRow[]
+    }>
+  >(`/outreach/collection-influencers?${q.toString()}`)
+  return res.data?.influencers ?? []
 }
 
 export async function listOutreachCampaigns(org_id?: string) {
