@@ -5,6 +5,7 @@ import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { ToastStack } from './Toast'
 import { SettingsDrawer } from './SettingsDrawer'
 import { OnboardingSheet } from './OnboardingSheet'
+import { OrgWorkspaceBanner } from './OrgWorkspaceBanner'
 
 const primaryNav: {
   id: Exclude<TabId, 'connect' | 'floor'>
@@ -151,6 +152,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="rx-main">
+        <OrgWorkspaceBanner />
         <main>{children}</main>
       </div>
 

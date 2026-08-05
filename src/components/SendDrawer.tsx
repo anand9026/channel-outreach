@@ -1,5 +1,6 @@
-import { CheckCircle2, Clock, MessageCircle, Mail, Users, Zap } from 'lucide-react'
+import { CheckCircle2, Clock, Loader2, MessageCircle, Mail, Users, Zap } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { resolveOrgId } from '../lib/api'
 import { firstChannel } from '../lib/cascade'
 import { mergeBindings, renderWithBindings } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
@@ -62,71 +63,136 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
           (s.channels.wa || s.channels.email)
         : true
 
+  const [sending, setSending] = useState(false)
+
   const close = () => {
     onClose()
     setTimeout(() => setS(defaultState(null, '')), 320)
   }
 
-  const send = () => {
-    // Ensure we have a campaign — create outreach campaign if not selected
-    let campId = s.campaignId
-    if (!campId) {
-      // Create a new outreach campaign right now
-      const newCampaign = {
-        name: s.campaignName || 'Untitled outreach',
-        brandId: null,
-        audienceSource: 'my_creators' as const,
-        collectionId: null,
-        influencerIds: s.audience,
+  const isCascadePreview =
+    s.strategy === 'cascade' && s.channels.wa && s.channels.email
+
+  const canLiveWhatsApp =
+    s.channels.wa &&
+    s.strategy === 'single' &&
+    Boolean(s.waTemplateId) &&
+    state.whatsAppNumbers.length > 0
+
+  const canLiveEmail =
+    s.channels.email &&
+    s.strategy === 'single' &&
+    Boolean(s.emailTemplateId) &&
+    state.emailAccounts.some((a) => a.provider === 'gmail')
+
+  const canLiveBoth =
+    canLiveWhatsApp &&
+    canLiveEmail &&
+    s.channels.wa &&
+    s.channels.email
+
+  const canLiveApi =
+    (canLiveWhatsApp || canLiveEmail) && s.strategy === 'single' && !isCascadePreview
+
+  const send = async () => {
+    if (sending) return
+    setSending(true)
+    try {
+      let campId = s.campaignId
+      if (!campId) {
+        campId = await actions.createOutreachCampaign({
+          name: s.campaignName || 'Untitled outreach',
+          brandId: null,
+          audienceSource: 'my_creators',
+          collectionId: null,
+          influencerIds: s.audience,
+        })
       }
-      actions.createOutreachCampaign(newCampaign)
-      // The new campaign id becomes selectedCampaignId — pick it up async
-      // For simplicity, we compute it after dispatch by peeking at store state.
-      // In a real product this'd return the id.
-      setTimeout(() => {
-        const latest = (window as any).__RX_CAMP_ID__ || null
-        actuallySend(latest)
-      }, 20)
-      return
+      const id = campId || state.selectedCampaignId
+      if (!id) {
+        actions.toast('Could not create campaign — try again', 'error')
+        return
+      }
+
+      const waNumber = state.whatsAppNumbers[0]
+      const emailAccount = state.emailAccounts.find((a) => a.provider === 'gmail')
+
+      if (canLiveApi) {
+        const whatsapp =
+          s.channels.wa && waNumber && s.waTemplateId
+            ? {
+                phoneNumberId: waNumber.phoneNumberId,
+                templateId: s.waTemplateId,
+                variableMapping: {},
+              }
+            : undefined
+        const email =
+          s.channels.email && emailAccount && s.emailTemplateId
+            ? {
+                emailAccountId: emailAccount.id,
+                templateId: s.emailTemplateId,
+                variableMapping: {},
+              }
+            : undefined
+
+        if (whatsapp || email) {
+          const { sent, failed } = await actions.sendOutreachCampaignLive({
+            campaignId: id,
+            influencerIds: s.audience,
+            whatsapp,
+            email,
+          })
+          const channels: string[] = []
+          if (whatsapp) channels.push('WhatsApp')
+          if (email) channels.push('Email')
+          if (sent > 0) {
+            actions.toast(
+              `Sent ${sent} message${sent === 1 ? '' : 's'} via ${channels.join(' + ')} · org ${resolveOrgId()}`,
+              failed > 0 ? 'info' : 'success',
+            )
+          } else {
+            actions.toast('No messages sent — check templates and connected channels', 'error')
+          }
+          close()
+          return
+        }
+      }
+
+      const useCascade = isCascadePreview
+      actions.prepareAndSend({
+        campaignId: id,
+        influencerIds: s.audience,
+        whatsapp:
+          s.channels.wa && waNumber && s.waTemplateId
+            ? {
+                phoneNumberId: waNumber.phoneNumberId,
+                templateId: s.waTemplateId,
+                variableMapping: {},
+              }
+            : undefined,
+        email:
+          s.channels.email && emailAccount && s.emailTemplateId
+            ? {
+                emailAccountId: emailAccount.id,
+                templateId: s.emailTemplateId,
+                variableMapping: {},
+              }
+            : undefined,
+        cascade: useCascade ? s.cascade : undefined,
+      })
+      actions.toast(
+        useCascade
+          ? `Demo sequence queued (${s.audience.length} creators) — cascade simulates locally`
+          : s.channels.email
+            ? `Demo delivery queued (${s.audience.length} creators) — connect Gmail for live sends`
+            : `Outreach queued to ${s.audience.length} creator${s.audience.length > 1 ? 's' : ''}`,
+        'info',
+      )
+      close()
+    } finally {
+      setSending(false)
     }
-    actuallySend(campId)
   }
-
-  const actuallySend = (campId: string | null) => {
-    const id = campId || state.selectedCampaignId
-    if (!id) return
-    const waNumber = state.whatsAppNumbers[0]
-    const emailAccount = state.emailAccounts[0]
-    const useCascade = s.strategy === 'cascade' && s.channels.wa && s.channels.email
-    actions.prepareAndSend({
-      campaignId: id,
-      influencerIds: s.audience,
-      whatsapp:
-        s.channels.wa && waNumber && s.waTemplateId
-          ? {
-              phoneNumberId: waNumber.phoneNumberId,
-              templateId: s.waTemplateId,
-              variableMapping: {},
-            }
-          : undefined,
-      email:
-        s.channels.email && emailAccount && s.emailTemplateId
-          ? {
-              emailAccountId: emailAccount.id,
-              templateId: s.emailTemplateId,
-              variableMapping: {},
-            }
-          : undefined,
-      cascade: useCascade ? s.cascade : undefined,
-    })
-    actions.toast(`Outreach queued to ${s.audience.length} creator${s.audience.length > 1 ? 's' : ''}`, 'success')
-    close()
-  }
-
-  // Expose newly-created campaign id via a store subscription hack for auto-select
-  useEffect(() => {
-    ;(window as any).__RX_CAMP_ID__ = state.selectedCampaignId
-  }, [state.selectedCampaignId])
 
   return (
     <Drawer
@@ -166,10 +232,23 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
             <button
               type="button"
               className="rx-btn accent"
-              onClick={send}
+              onClick={() => void send()}
+              disabled={sending}
               data-testid="send-confirm"
             >
-              Send outreach
+              {sending ? (
+                <>
+                  <Loader2 size={14} className="rx-spin" /> Sending…
+                </>
+              ) : canLiveBoth ? (
+                'Send via WhatsApp + Email'
+              ) : canLiveWhatsApp ? (
+                'Send via WhatsApp API'
+              ) : canLiveEmail ? (
+                'Send via Gmail API'
+              ) : (
+                'Send outreach'
+              )}
             </button>
           )}
         </>
@@ -638,10 +717,40 @@ function StepReview({ s }: { s: SendState }) {
       ? `${firstChannel(s.cascade.order) === 'whatsapp' ? 'WhatsApp' : 'Email'} first, follow up on ${firstChannel(s.cascade.order) === 'whatsapp' ? 'Email' : 'WhatsApp'} after ${s.cascade.waitHours}h if no reply.`
       : 'Send everything now on selected channels.'
 
+  const liveWaOnly =
+    s.channels.wa &&
+    !s.channels.email &&
+    s.strategy === 'single' &&
+    state.whatsAppNumbers.length > 0
+
+  const liveEmailOnly =
+    s.channels.email &&
+    !s.channels.wa &&
+    s.strategy === 'single' &&
+    state.emailAccounts.some((a) => a.provider === 'gmail')
+
+  const liveBoth =
+    s.channels.wa &&
+    s.channels.email &&
+    s.strategy === 'single' &&
+    state.whatsAppNumbers.length > 0 &&
+    state.emailAccounts.some((a) => a.provider === 'gmail')
+
   const summary = useMemo(() => {
+    const delivery = liveBoth
+      ? `Live API · WhatsApp + Email · org ${resolveOrgId()}`
+      : liveWaOnly
+        ? `Live API · WhatsApp · org ${resolveOrgId()}`
+        : liveEmailOnly
+          ? `Live API · Gmail · org ${resolveOrgId()}`
+          : s.strategy === 'cascade'
+            ? 'Demo sequence (cascade simulates locally)'
+            : 'Local demo (connect channels for live sends)'
+
     const rows: { label: string; value: string }[] = [
       { label: 'Outreach', value: s.campaignName || '—' },
       { label: 'Recipients', value: `${s.audience.length} creator${s.audience.length === 1 ? '' : 's'}` },
+      { label: 'Delivery', value: delivery },
       {
         label: 'Channels',
         value: [
@@ -654,7 +763,7 @@ function StepReview({ s }: { s: SendState }) {
       { label: 'Strategy', value: s.strategy === 'cascade' ? 'Smart sequence' : 'Send now' },
     ]
     return rows
-  }, [s])
+  }, [s, liveWaOnly, liveEmailOnly, liveBoth])
 
   return (
     <>

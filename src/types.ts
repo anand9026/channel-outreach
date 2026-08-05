@@ -147,6 +147,12 @@ export interface Campaign {
   /** Resolved influencer ids for send (from roster, collection, or my creators) */
   influencerIds: string[]
   createdAt: string
+  /** Populated when synced from `/outreach/campaigns` */
+  sentCount?: number
+  failedCount?: number
+  recipientCount?: number
+  description?: string | null
+  source?: 'db' | 'local'
 }
 
 export interface Template {
@@ -242,6 +248,10 @@ export interface Conversation {
   isLive?: boolean
   /** Gmail thread id for live email conversations */
   gmailThreadId?: string
+  /** Unified SQL thread id from outreach_threads */
+  outreachThreadId?: string
+  /** Provider-side thread key (phone digits, Gmail thread id, etc.) */
+  providerThreadId?: string
   /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */
   labels?: string[]
 }

@@ -6,15 +6,18 @@ import { PageHeader } from '../components/PageHeader'
 import {
   GMAIL_USER_ID,
   listGmailTemplates,
+  listOutreachTemplates,
   listWhatsAppTemplates,
+  resolveOrgId,
   type GmailTemplate,
   type MetaTemplate,
+  type OutreachTemplateRow,
 } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 type Row = {
   key: string
-  source: 'local' | 'meta' | 'gmail'
+  source: 'local' | 'meta' | 'gmail' | 'registry'
   name: string
   channel: 'whatsapp' | 'email' | 'instagram'
   category: string
@@ -22,6 +25,42 @@ type Row = {
   variables: string[]
   status: string
   updatedAt: string
+}
+
+function mapRegistryMedium(medium: string): 'whatsapp' | 'email' | 'instagram' {
+  const m = (medium || '').toLowerCase()
+  if (m.includes('whatsapp') || m === 'wa') return 'whatsapp'
+  if (m.includes('gmail') || m.includes('email')) return 'email'
+  if (m.includes('instagram') || m === 'ig') return 'instagram'
+  return 'whatsapp'
+}
+
+function registryRow(t: OutreachTemplateRow): Row {
+  const channel = mapRegistryMedium(t.medium)
+  const body = (t.body_template || t.html_template || t.subject_template || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  let variables: string[] = []
+  if (Array.isArray(t.variables_schema)) {
+    variables = t.variables_schema.map(String)
+  } else if (t.variables_schema && typeof t.variables_schema === 'object') {
+    const vs = t.variables_schema as { slots?: string[]; variables?: string[] }
+    variables = vs.slots || vs.variables || []
+  }
+  return {
+    key: `registry:${t.outreach_template_id}`,
+    source: 'registry',
+    name: t.external_name || t.name,
+    channel,
+    category: t.category || '—',
+    body,
+    variables,
+    status: (t.status || 'ACTIVE').toUpperCase(),
+    updatedAt: t.date_modified
+      ? new Date(t.date_modified).toISOString()
+      : String(t.date_added || ''),
+  }
 }
 
 function extractMetaBody(t: MetaTemplate): { body: string; variables: string[] } {
@@ -36,6 +75,7 @@ function extractMetaBody(t: MetaTemplate): { body: string; variables: string[] }
 export function TemplatesLib() {
   const { state } = useWhatsAppStore()
   const [tab, setTab] = useState<'all' | 'whatsapp' | 'email'>('all')
+  const [sourceTab, setSourceTab] = useState<'all' | 'registry' | 'meta' | 'gmail' | 'local'>('all')
   const [search, setSearch] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
@@ -43,6 +83,9 @@ export function TemplatesLib() {
   const [metaError, setMetaError] = useState<string | null>(null)
   const [gmailTemplates, setGmailTemplates] = useState<GmailTemplate[]>([])
   const [, setGmailError] = useState<string | null>(null)
+  const [registryTemplates, setRegistryTemplates] = useState<OutreachTemplateRow[]>([])
+  const [registryLoading, setRegistryLoading] = useState(false)
+  const [registryError, setRegistryError] = useState<string | null>(null)
 
   const loadMeta = async () => {
     setMetaLoading(true)
@@ -71,9 +114,23 @@ export function TemplatesLib() {
     }
   }
 
+  const loadRegistry = async () => {
+    setRegistryLoading(true)
+    setRegistryError(null)
+    try {
+      const res = await listOutreachTemplates({ org_id: resolveOrgId() })
+      setRegistryTemplates(res)
+    } catch (e) {
+      setRegistryError((e as Error).message || 'Could not load SQL template registry')
+    } finally {
+      setRegistryLoading(false)
+    }
+  }
+
   useEffect(() => {
     void loadMeta()
     void loadGmail()
+    void loadRegistry()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -131,8 +188,11 @@ export function TemplatesLib() {
       }
     })
 
-    return [...localRows, ...metaRows, ...gmailRows]
+    const registryRows: Row[] = registryTemplates.map(registryRow)
+
+    return [...localRows, ...registryRows, ...metaRows, ...gmailRows]
       .filter((r) => (tab === 'all' ? true : r.channel === tab))
+      .filter((r) => (sourceTab === 'all' ? true : r.source === sourceTab))
       .filter((r) =>
         !search
           ? true
@@ -140,7 +200,7 @@ export function TemplatesLib() {
             r.body.toLowerCase().includes(search.toLowerCase()),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [state.templates, metaTemplates, gmailTemplates, tab, search])
+  }, [state.templates, metaTemplates, gmailTemplates, registryTemplates, tab, sourceTab, search])
 
   return (
     <div className="rx-page">
@@ -155,12 +215,13 @@ export function TemplatesLib() {
               onClick={() => {
                 void loadMeta()
                 void loadGmail()
+                void loadRegistry()
               }}
-              disabled={metaLoading}
-              title="Refresh Meta and Gmail templates"
+              disabled={metaLoading || registryLoading}
+              title="Refresh Meta, Gmail, and SQL registry"
               data-testid="refresh-meta-templates"
             >
-              <RefreshCcw size={13} className={metaLoading ? 'rx-spin' : ''} />
+              <RefreshCcw size={13} className={metaLoading || registryLoading ? 'rx-spin' : ''} />
               Refresh
             </button>
             <button
@@ -197,7 +258,20 @@ export function TemplatesLib() {
         </div>
       ) : null}
 
-      <div className="rx-row rx-mb-4" style={{ justifyContent: 'space-between', gap: 12 }}>
+      {registryError ? (
+        <div
+          className="rx-card rx-alert-soft"
+          style={{ marginBottom: 16 }}
+          data-testid="registry-templates-error"
+        >
+          <AlertTriangle size={14} />
+          <span className="rx-text-sm">
+            SQL registry sync failed: {registryError}. Other sources still work.
+          </span>
+        </div>
+      ) : null}
+
+      <div className="rx-row rx-mb-4" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div className="rx-search" style={{ flex: 1, maxWidth: 360 }}>
           <Search size={14} className="rx-search-icon" />
           <input
@@ -227,6 +301,28 @@ export function TemplatesLib() {
             Email
           </button>
         </div>
+      </div>
+
+      <div className="rx-source-tabs rx-mb-4" data-testid="template-source-tabs">
+        {(
+          [
+            ['all', 'All sources'],
+            ['registry', 'SQL registry'],
+            ['local', 'Local drafts'],
+            ['meta', 'Meta'],
+            ['gmail', 'Gmail'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`rx-chip${sourceTab === id ? ' is-active' : ''}`}
+            onClick={() => setSourceTab(id)}
+            data-testid={`source-tab-${id}`}
+          >
+            {id === 'registry' ? <span className="mono">SQL</span> : null} {label}
+          </button>
+        ))}
       </div>
 
       {rows.length === 0 ? (
@@ -278,7 +374,9 @@ export function TemplatesLib() {
                     <span className={`rx-badge ${statusClass(t.status)}`}>{t.status}</span>
                   </td>
                   <td>
-                    {t.source === 'meta' ? (
+                    {t.source === 'registry' ? (
+                      <span className="rx-sql-tag mono" title={`org ${resolveOrgId()}`}>SQL</span>
+                    ) : t.source === 'meta' ? (
                       <span className="rx-live-tag mono">META</span>
                     ) : t.source === 'gmail' ? (
                       <span className="rx-live-tag mono" style={{ background: 'rgba(47, 128, 255, 0.14)', color: 'var(--email)' }}>GMAIL</span>

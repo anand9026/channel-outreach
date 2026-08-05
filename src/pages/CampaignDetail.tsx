@@ -1,7 +1,8 @@
-import { ArrowLeft, MessageCircle, Send } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ArrowLeft, Loader2, MessageCircle, RefreshCw, Send } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { SendDrawer } from '../components/SendDrawer'
+import { getOutreachCampaign, resolveOrgId, type OutreachCampaignRow } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 export function CampaignDetail({
@@ -14,6 +15,26 @@ export function CampaignDetail({
   const { state, actions } = useWhatsAppStore()
   const campaign = state.campaigns.find((c) => c.id === campaignId)
   const [sendOpen, setSendOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [dbRow, setDbRow] = useState<OutreachCampaignRow | null>(null)
+
+  const refreshFromApi = async () => {
+    if (!campaign || campaign.source !== 'db') return
+    setRefreshing(true)
+    try {
+      const data = await getOutreachCampaign(campaignId, resolveOrgId())
+      setDbRow(data?.campaign ?? null)
+    } catch {
+      /* keep local snapshot */
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshFromApi()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, campaign?.source])
 
   const analytics = state.analytics.find((a) => a.campaignId === campaignId)
   const messages = useMemo(
@@ -33,11 +54,15 @@ export function CampaignDetail({
     )
   }
 
-  const totalSent = (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
+  const totalSent =
+    dbRow?.sent_count ??
+    campaign.sentCount ??
+    (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
   const totalDelivered = (analytics?.whatsapp.delivered || 0) + (analytics?.email.delivered || 0)
   const totalRead = (analytics?.whatsapp.read || 0) + (analytics?.email.read || 0)
   const totalReplies = (analytics?.whatsapp.replied || 0) + (analytics?.email.replied || 0)
-  const totalFailed = (analytics?.whatsapp.failed || 0) + (analytics?.email.failed || 0)
+  const totalFailed =
+    dbRow?.failed_count ?? campaign.failedCount ?? (analytics?.whatsapp.failed || 0) + (analytics?.email.failed || 0)
   const brand = state.brands.find((b) => b.id === campaign.brandId)
 
   return (
@@ -58,9 +83,30 @@ export function CampaignDetail({
             <span>{campaign.influencerIds.length} creators</span>
             <span>·</span>
             <span>{campaign.kind}</span>
+            {campaign.source === 'db' ? (
+              <>
+                <span>·</span>
+                <span className="rx-badge db">SQL · org {resolveOrgId()}</span>
+              </>
+            ) : null}
           </div>
         </div>
         <div className="rx-row" style={{ gap: 8 }}>
+          {campaign.source === 'db' ? (
+            <button
+              type="button"
+              className="rx-btn ghost sm"
+              disabled={refreshing}
+              onClick={() => void refreshFromApi()}
+              title="Refresh from database"
+            >
+              {refreshing ? (
+                <Loader2 size={14} className="rx-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             className="rx-btn secondary"

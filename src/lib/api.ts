@@ -6,6 +6,29 @@ export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE
 ).replace(/\/$/, '')
 
+/** Env fallback when org_id is not passed on the request or in the URL. */
+export const OUTREACH_ORG_ID = (
+  import.meta.env.VITE_OUTREACH_ORG_ID || 'mq3cl6'
+).slice(0, 6)
+
+/**
+ * Resolve org_id for API calls (CHAR(6)).
+ * Priority: explicit argument → ?org_id= URL param → VITE_OUTREACH_ORG_ID env.
+ * Auth-token org resolution can replace this later.
+ */
+export function resolveOrgId(explicit?: string | null): string {
+  if (explicit != null && String(explicit).trim()) {
+    return String(explicit).trim().slice(0, 6)
+  }
+  if (typeof window !== 'undefined') {
+    const fromUrl = new URLSearchParams(window.location.search).get('org_id')
+    if (fromUrl && fromUrl.trim()) {
+      return fromUrl.trim().slice(0, 6)
+    }
+  }
+  return OUTREACH_ORG_ID
+}
+
 export const GMAIL_USER_ID =
   import.meta.env.VITE_GMAIL_USER_ID || DEFAULT_GMAIL_USER_ID
 
@@ -85,10 +108,18 @@ async function request<T>(
 function withGmailScopeParams(input?: {
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = new URLSearchParams()
   q.set('user_id', input?.user_id || GMAIL_USER_ID)
   q.set('channel_id', input?.channel_id || GMAIL_CHANNEL_ID)
+  q.set('org_id', resolveOrgId(input?.org_id))
+  return q
+}
+
+function withOrgParams(input?: { org_id?: string }) {
+  const q = new URLSearchParams()
+  q.set('org_id', resolveOrgId(input?.org_id))
   return q
 }
 
@@ -104,10 +135,14 @@ export type InboxThread = {
   phone: string
   display_name: string
   phone_number_id: string | null
+  outreach_thread_id?: string
+  outreach_conversation_id?: string
   last_message_at: string
   last_preview: string
   last_inbound_at: string | null
   unread_count: number
+  status?: string
+  medium?: string
 }
 
 export type InboxMessage = {
@@ -281,12 +316,14 @@ export async function sendWhatsAppText(input: {
   to: string
   text: string
   phone_number_id?: string
+  org_id?: string
 }) {
   const res = await request<ApiSuccess<Record<string, unknown>>>(
     '/whatsapp-outreach/messages/text',
     {
       method: 'POST',
       body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
         to: input.to.replace(/^\+/, ''),
         text: input.text,
         phone_number_id: input.phone_number_id,
@@ -303,6 +340,8 @@ export async function sendWhatsAppTemplate(input: {
   bodyParams?: string[]
   phone_number_id?: string
   preview_body?: string
+  org_id?: string
+  outreach_campaign_id?: string
 }) {
   const components =
     input.bodyParams && input.bodyParams.length
@@ -322,27 +361,33 @@ export async function sendWhatsAppTemplate(input: {
     {
       method: 'POST',
       body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
         to: input.to.replace(/^\+/, ''),
         template_name: input.template_name,
         language_code: input.language_code || 'en_US',
         components,
         phone_number_id: input.phone_number_id,
         preview_body: input.preview_body,
+        outreach_campaign_id: input.outreach_campaign_id,
       }),
     },
   )
   return res.data
 }
 
-export async function listWhatsAppInbox() {
+export async function listWhatsAppInbox(org_id?: string) {
+  const q = withOrgParams({ org_id })
   const res = await request<ApiSuccess<{ threads?: InboxThread[] }>>(
-    '/whatsapp-outreach/inbox',
+    `/whatsapp-outreach/inbox?${q.toString()}`,
   )
   return res.data?.threads ?? []
 }
 
-export async function getWhatsAppInboxMessages(phone: string) {
-  const q = new URLSearchParams({ phone: phone.replace(/\D/g, '') })
+export async function getWhatsAppInboxMessages(phone: string, org_id?: string) {
+  const q = new URLSearchParams({
+    phone: phone.replace(/\D/g, ''),
+    org_id: resolveOrgId(org_id),
+  })
   const res = await request<
     ApiSuccess<{ phone?: string; messages?: InboxMessage[] }>
   >(`/whatsapp-outreach/inbox/messages?${q}`)
@@ -352,6 +397,7 @@ export async function getWhatsAppInboxMessages(phone: string) {
 export async function getGmailConnectUrl(input?: {
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = withGmailScopeParams(input)
   const res = await request<
@@ -363,6 +409,7 @@ export async function getGmailConnectUrl(input?: {
 export async function getGmailConnection(input?: {
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = withGmailScopeParams(input)
   const res = await request<ApiSuccess<GmailConnectionInfo>>(
@@ -374,6 +421,7 @@ export async function getGmailConnection(input?: {
 export async function createGmailTemplate(input: {
   user_id?: string
   channel_id?: string
+  org_id?: string
   template_name: string
   subject_template: string
   html_template: string
@@ -385,6 +433,7 @@ export async function createGmailTemplate(input: {
     body: JSON.stringify({
       user_id: input.user_id || GMAIL_USER_ID,
       channel_id: input.channel_id || GMAIL_CHANNEL_ID,
+      org_id: resolveOrgId(input.org_id),
       template_name: input.template_name,
       subject_template: input.subject_template,
       html_template: input.html_template,
@@ -398,6 +447,7 @@ export async function createGmailTemplate(input: {
 export async function listGmailTemplates(input?: {
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = withGmailScopeParams(input)
   const res = await request<ApiSuccess<{ templates?: GmailTemplate[] }>>(
@@ -410,6 +460,7 @@ export async function getGmailTemplate(input: {
   template_name: string
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = withGmailScopeParams(input)
   q.set('template_name', input.template_name)
@@ -427,6 +478,7 @@ export async function sendGmailTemplate(input: {
   thread_id?: string
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const res = await request<ApiSuccess<Record<string, unknown>>>(
     '/gmail-outreach/messages/template',
@@ -435,6 +487,7 @@ export async function sendGmailTemplate(input: {
       body: JSON.stringify({
         user_id: input.user_id || GMAIL_USER_ID,
         channel_id: input.channel_id || GMAIL_CHANNEL_ID,
+        org_id: resolveOrgId(input.org_id),
         to: input.to,
         template_name: input.template_name,
         variables: input.variables,
@@ -457,6 +510,7 @@ export async function sendGmailMessage(input: {
   thread_id?: string
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const res = await request<
     ApiSuccess<{
@@ -470,6 +524,7 @@ export async function sendGmailMessage(input: {
     body: JSON.stringify({
       user_id: input.user_id || GMAIL_USER_ID,
       channel_id: input.channel_id || GMAIL_CHANNEL_ID,
+      org_id: resolveOrgId(input.org_id),
       to: input.to,
       subject: input.subject,
       body: input.body,
@@ -485,6 +540,7 @@ export async function sendGmailMessage(input: {
 export async function listGmailThreads(input?: {
   user_id?: string
   channel_id?: string
+  org_id?: string
   limit?: number
 }) {
   const q = withGmailScopeParams(input)
@@ -499,6 +555,7 @@ export async function getGmailThread(input: {
   thread_id: string
   user_id?: string
   channel_id?: string
+  org_id?: string
 }) {
   const q = withGmailScopeParams(input)
   q.set('thread_id', input.thread_id)
@@ -509,5 +566,313 @@ export async function getGmailThread(input: {
       messages: GmailThreadMessage[]
     }>
   >(`/gmail-outreach/thread?${q.toString()}`)
+  return res.data
+}
+
+export type OutreachChannelRow = {
+  outreach_channel_id: string
+  org_id: string
+  user_id?: string | null
+  brand_id?: string | null
+  medium: 'whatsapp' | 'gmail' | 'instagram'
+  account_label?: string | null
+  account_address?: string | null
+  display_name?: string | null
+  display_phone_number?: string | null
+  email_address?: string | null
+  phone_number_id?: string | null
+  waba_id?: string | null
+  status?: string
+  date_added: number
+  date_modified: number
+}
+
+export type OutreachTemplateRow = {
+  outreach_template_id: string
+  org_id: string
+  brand_id?: string | null
+  medium: string
+  name: string
+  external_name?: string | null
+  language?: string | null
+  category?: string | null
+  subject_template?: string | null
+  body_template?: string | null
+  html_template?: string | null
+  variables_schema?: unknown
+  status?: string
+  date_added: number
+  date_modified: number
+}
+
+export type OutreachMessageAttachment = {
+  type?: string
+  provider_media_id?: string | null
+  mime_type?: string | null
+  caption?: string | null
+  filename?: string | null
+}
+
+export type OutreachMessageRow = {
+  outreach_message_id: string
+  org_id: string
+  outreach_thread_id: string
+  direction: 'inbound' | 'outbound'
+  message_type?: string
+  text_body?: string | null
+  html_body?: string | null
+  message_status?: string
+  subject?: string | null
+  provider_message_id?: string | null
+  parent_provider_message_id?: string | null
+  reply_to_message_id?: string | null
+  attachments?: OutreachMessageAttachment[] | string | null
+  has_attachment?: number | boolean
+  attachment_count?: number
+  error_message?: string | null
+  ai_generated?: number | boolean
+  ai_model?: string | null
+  metadata?: Record<string, unknown> | string | null
+  provider_created_at?: string | null
+  provider_updated_at?: string | null
+  delivered_at?: string | null
+  read_at?: string | null
+  failed_at?: string | null
+  date_added: number
+  date_modified: number
+}
+
+export type OutreachCampaignRow = {
+  outreach_campaign_id: string
+  org_id: string
+  brand_id?: string | null
+  platform_campaign_id?: string | null
+  name: string
+  description?: string | null
+  kind: 'outreach' | 'marketing'
+  status: string
+  audience_type: string
+  audience_ref_id?: string | null
+  recipient_count?: number
+  sent_count?: number
+  failed_count?: number
+  created_by_user_id: string
+  date_added: number
+  date_modified: number
+}
+
+export type OutreachThreadRow = {
+  outreach_thread_id: string
+  outreach_conversation_id: string
+  medium: 'whatsapp' | 'gmail' | 'instagram'
+  provider_thread_id: string
+  contact_name?: string | null
+  contact_email?: string | null
+  contact_phone?: string | null
+  subject?: string | null
+  last_preview?: string | null
+  status: string
+  unread_count: number
+  last_message_at?: string | null
+  last_inbound_at?: string | null
+}
+
+export async function listOutreachChannels(input?: {
+  org_id?: string
+  medium?: string
+}) {
+  const q = withOrgParams({ org_id: input?.org_id })
+  if (input?.medium) q.set('medium', input.medium)
+  const res = await request<ApiSuccess<{ channels?: OutreachChannelRow[] }>>(
+    `/outreach/channels?${q.toString()}`,
+  )
+  return res.data?.channels ?? []
+}
+
+export async function listOutreachTemplates(input?: {
+  org_id?: string
+  medium?: string
+}) {
+  const q = withOrgParams({ org_id: input?.org_id })
+  if (input?.medium) q.set('medium', input.medium)
+  const res = await request<ApiSuccess<{ templates?: OutreachTemplateRow[] }>>(
+    `/outreach/templates?${q.toString()}`,
+  )
+  return res.data?.templates ?? []
+}
+
+export async function createOutreachTemplate(input: {
+  org_id?: string
+  brand_id?: string
+  medium: string
+  name: string
+  external_name?: string
+  language?: string
+  category?: string
+  subject_template?: string
+  body_template?: string
+  html_template?: string
+  bindings?: unknown
+  variables_schema?: unknown
+  status?: string
+  created_by_user_id?: string
+}) {
+  const res = await request<ApiSuccess<OutreachTemplateRow>>('/outreach/templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      org_id: resolveOrgId(input.org_id),
+      brand_id: input.brand_id,
+      medium: input.medium,
+      name: input.name,
+      external_name: input.external_name,
+      language: input.language,
+      category: input.category,
+      subject_template: input.subject_template,
+      body_template: input.body_template,
+      html_template: input.html_template,
+      bindings: input.bindings,
+      variables_schema: input.variables_schema,
+      status: input.status,
+      created_by_user_id: input.created_by_user_id || 'system',
+    }),
+  })
+  return res.data
+}
+
+export async function listOutreachThreadMessages(input: {
+  outreach_thread_id: string
+  limit?: number
+}) {
+  const q = new URLSearchParams()
+  q.set('outreach_thread_id', input.outreach_thread_id)
+  if (input.limit) q.set('limit', String(input.limit))
+  const res = await request<ApiSuccess<{ messages?: OutreachMessageRow[] }>>(
+    `/outreach/threads/messages?${q.toString()}`,
+  )
+  return res.data?.messages ?? []
+}
+
+export async function getOutreachCampaign(
+  outreach_campaign_id: string,
+  org_id?: string,
+) {
+  const q = withOrgParams({ org_id })
+  q.set('outreach_campaign_id', outreach_campaign_id)
+  const res = await request<
+    ApiSuccess<{
+      campaign?: OutreachCampaignRow
+      channels?: unknown[]
+    }>
+  >(`/outreach/campaign?${q.toString()}`)
+  return res.data
+}
+
+export async function updateOutreachCampaign(input: {
+  outreach_campaign_id: string
+  org_id?: string
+  status?: string
+  sent_count?: number
+  failed_count?: number
+  delivered_count?: number
+  read_count?: number
+  replied_count?: number
+  recipient_count?: number
+}) {
+  const res = await request<ApiSuccess<OutreachCampaignRow>>(
+    '/outreach/campaigns/update',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
+        outreach_campaign_id: input.outreach_campaign_id,
+        status: input.status,
+        sent_count: input.sent_count,
+        failed_count: input.failed_count,
+        delivered_count: input.delivered_count,
+        read_count: input.read_count,
+        replied_count: input.replied_count,
+        recipient_count: input.recipient_count,
+      }),
+    },
+  )
+  return res.data
+}
+
+export async function listOutreachCampaigns(org_id?: string) {
+  const q = withOrgParams({ org_id })
+  const res = await request<ApiSuccess<{ campaigns?: OutreachCampaignRow[] }>>(
+    `/outreach/campaigns?${q.toString()}`,
+  )
+  return res.data?.campaigns ?? []
+}
+
+export async function createOutreachCampaign(input: {
+  name: string
+  audience_type: string
+  audience_ref_id?: string
+  kind?: 'outreach' | 'marketing'
+  status?: string
+  brand_id?: string
+  platform_campaign_id?: string
+  description?: string
+  created_by_user_id?: string
+  org_id?: string
+}) {
+  const res = await request<ApiSuccess<OutreachCampaignRow>>('/outreach/campaigns', {
+    method: 'POST',
+    body: JSON.stringify({
+      org_id: resolveOrgId(input.org_id),
+      name: input.name,
+      audience_type: input.audience_type,
+      audience_ref_id: input.audience_ref_id,
+      kind: input.kind || 'outreach',
+      status: input.status || 'draft',
+      brand_id: input.brand_id,
+      platform_campaign_id: input.platform_campaign_id,
+      description: input.description,
+      created_by_user_id: input.created_by_user_id || 'system',
+    }),
+  })
+  return res.data
+}
+
+export async function listOutreachThreads(input?: {
+  org_id?: string
+  medium?: string
+  entity_type?: string
+  entity_id?: string
+  limit?: number
+}) {
+  const q = withOrgParams({ org_id: input?.org_id })
+  if (input?.medium) q.set('medium', input.medium)
+  if (input?.entity_type) q.set('entity_type', input.entity_type)
+  if (input?.entity_id) q.set('entity_id', input.entity_id)
+  if (input?.limit) q.set('limit', String(input.limit))
+  const res = await request<ApiSuccess<{ threads?: OutreachThreadRow[] }>>(
+    `/outreach/threads?${q.toString()}`,
+  )
+  return res.data?.threads ?? []
+}
+
+export async function createOutreachThreadLink(input: {
+  outreach_thread_id: string
+  entity_type: string
+  entity_id: string
+  link_source?: 'auto' | 'manual'
+  org_id?: string
+}) {
+  const res = await request<ApiSuccess<Record<string, unknown>>>(
+    '/outreach/thread-links',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
+        outreach_thread_id: input.outreach_thread_id,
+        entity_type: input.entity_type,
+        entity_id: input.entity_id,
+        link_source: input.link_source || 'manual',
+      }),
+    },
+  )
   return res.data
 }

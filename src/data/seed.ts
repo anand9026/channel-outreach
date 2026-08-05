@@ -163,68 +163,7 @@ export const seedMyCreatorIds: string[] = [
   'inf_8',
 ]
 
-export const seedCampaigns: Campaign[] = [
-  {
-    id: 'camp_summer_glow',
-    organizationId: ORG_ID,
-    brandId: 'brand_glow',
-    name: 'Summer Glow Launch',
-    kind: 'marketing',
-    audienceSource: 'campaign_roster',
-    collectionId: null,
-    status: 'active',
-    influencerIds: ['inf_1', 'inf_2', 'inf_5'],
-    createdAt: '2026-06-01T10:00:00Z',
-  },
-  {
-    id: 'camp_monsoon_hydration',
-    organizationId: ORG_ID,
-    brandId: 'brand_glow',
-    name: 'Monsoon Hydration Push',
-    kind: 'marketing',
-    audienceSource: 'campaign_roster',
-    collectionId: null,
-    status: 'active',
-    influencerIds: ['inf_3', 'inf_4', 'inf_6'],
-    createdAt: '2026-06-15T10:00:00Z',
-  },
-  {
-    id: 'camp_festive_lookbook',
-    organizationId: ORG_ID,
-    brandId: 'brand_hair',
-    name: 'Festive Lookbook 2026',
-    kind: 'marketing',
-    audienceSource: 'campaign_roster',
-    collectionId: null,
-    status: 'draft',
-    influencerIds: ['inf_1', 'inf_3', 'inf_5', 'inf_6'],
-    createdAt: '2026-07-01T10:00:00Z',
-  },
-  {
-    id: 'camp_org_recruit',
-    organizationId: ORG_ID,
-    brandId: null,
-    name: 'Creator Network Recruit (org-wide)',
-    kind: 'marketing',
-    audienceSource: 'campaign_roster',
-    collectionId: null,
-    status: 'active',
-    influencerIds: ['inf_2', 'inf_4', 'inf_6'],
-    createdAt: '2026-07-10T10:00:00Z',
-  },
-  {
-    id: 'camp_outreach_beauty',
-    organizationId: ORG_ID,
-    brandId: 'brand_glow',
-    name: 'WA outreach · Beauty Tier A',
-    kind: 'outreach',
-    audienceSource: 'collection',
-    collectionId: 'col_beauty_tier_a',
-    status: 'draft',
-    influencerIds: ['inf_1', 'inf_2', 'inf_5'],
-    createdAt: '2026-07-15T10:00:00Z',
-  },
-]
+export const seedCampaigns: Campaign[] = []
 
 export const seedTemplates: Template[] = [
   {

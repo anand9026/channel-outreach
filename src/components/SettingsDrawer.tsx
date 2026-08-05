@@ -1,5 +1,6 @@
 import { CheckCircle2, Mail, MessageCircle, Moon, Plus, Sparkles, Sun, Trash2, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { BackendWorkspaceCard } from './BackendWorkspaceCard'
 import { IgIcon } from './BrandIcons'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import { Drawer } from './Drawer'
@@ -26,6 +27,8 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
   return (
     <>
       <Drawer open={open} onClose={onClose} title="Settings" subtitle="Channels · Brands · Team · Preferences" size="lg">
+        <BackendWorkspaceCard compact />
+
         <section>
           <div className="rx-section-title">Channels</div>
 

@@ -9,6 +9,7 @@ import {
   Shield,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { BackendWorkspaceCard } from '../components/BackendWorkspaceCard'
 import { IgIcon } from '../components/BrandIcons'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
@@ -158,6 +159,8 @@ export function ConnectPage() {
           ) : null
         }
       />
+
+      <BackendWorkspaceCard />
 
       <div className="rx-connect-grid three rx-mb-4">
         {/* WhatsApp */}

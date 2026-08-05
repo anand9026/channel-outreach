@@ -31,7 +31,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EmojiPicker } from '../components/EmojiPicker'
 import { EmptyState } from '../components/EmptyState'
 import { IgIcon } from '../components/BrandIcons'
-import { whatsappMediaUrl } from '../lib/api'
+import { whatsappMediaUrl, resolveOrgId } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import type { Conversation, Message, OutreachChannel } from '../types'
 
@@ -252,6 +252,9 @@ export function InboxV2() {
                       · pnid {connection.phone_number_id.slice(-6)}
                     </span>
                   ) : null}
+                  <span className="rx-live-pnid" title="Outreach org_id">
+                    · org {resolveOrgId()}
+                  </span>
                 </div>
               </div>
               <button
@@ -444,6 +447,9 @@ export function InboxV2() {
                         {inf?.name || 'Unknown'}
                         {c.isLive ? (
                           <span className="rx-live-tag mono" title="Live from the Cloud API">LIVE</span>
+                        ) : null}
+                        {c.outreachThreadId ? (
+                          <span className="rx-sql-tag mono" title={`SQL thread ${c.outreachThreadId}`}>SQL</span>
                         ) : null}
                       </div>
                       <div className="rx-conv-time">
@@ -757,6 +763,9 @@ function Thread() {
             <div style={{ fontWeight: 600, fontSize: 14.5, letterSpacing: '-0.01em' }}>
               {inf?.name}
               {conv.isLive ? <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>LIVE</span> : null}
+              {conv.outreachThreadId ? (
+                <span className="rx-sql-tag mono" style={{ marginLeft: 6 }} title={`SQL thread ${conv.outreachThreadId}`}>SQL</span>
+              ) : null}
             </div>
             <div className="rx-text-xs rx-muted mono">
               {unified

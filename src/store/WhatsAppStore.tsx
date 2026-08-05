@@ -9,12 +9,10 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  ORG_ID,
   conversationKey,
   emptyMetrics,
   seedAnalytics,
   seedBrands,
-  seedCampaigns,
   seedChannels,
   seedCollections,
   seedConversations,
@@ -29,23 +27,38 @@ import {
   seedWhatsAppNumbers,
 } from '../data/seed'
 import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
-import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
+import { extractSlots, mergeBindings, renderWithBindings, bodyParamsForBindings, resolveField } from '../lib/variables'
 import {
   ApiError,
+  createOutreachCampaign as apiCreateOutreachCampaign,
+  createOutreachThreadLink,
   getGmailConnection,
   getGmailThread,
   getWhatsAppConnection,
   getWhatsAppInboxMessages,
   listGmailThreads,
+  listOutreachCampaigns,
+  listOutreachChannels,
+  listOutreachThreadMessages,
+  listOutreachThreads,
   listWhatsAppInbox,
+  resolveOrgId,
   sendGmailMessage,
+  sendGmailTemplate,
+  sendWhatsAppTemplate,
   sendWhatsAppText,
+  updateOutreachCampaign,
   type ConnectionInfo,
   type GmailConnectionInfo,
   type GmailThreadMessage,
   type GmailThreadMeta,
   type InboxMessage as ApiInboxMessage,
   type InboxThread as ApiInboxThread,
+  type OutreachCampaignRow,
+  type OutreachChannelRow,
+  type OutreachMessageRow,
+  type OutreachMessageAttachment,
+  type OutreachThreadRow,
 } from '../lib/api'
 import type {
   AudienceSource,
@@ -83,7 +96,7 @@ export interface AppState {
   influencers: Influencer[]
   collections: CollectionList[]
   myCreatorIds: string[]
-  campaigns: typeof seedCampaigns
+  campaigns: Campaign[]
   templates: Template[]
   whatsAppNumbers: WhatsAppNumber[]
   emailAccounts: EmailAccount[]
@@ -247,6 +260,9 @@ type Action =
         influencerIds: string[]
       }
     }
+  | { type: 'MERGE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
+  | { type: 'HYDRATE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
+  | { type: 'HYDRATE_OUTREACH_CHANNELS'; channels: OutreachChannelRow[] }
   | {
       type: 'CREATE_COLLECTION'
       payload: { name: string; brandId: string | null; influencerIds: string[] }
@@ -263,6 +279,14 @@ type Action =
   | { type: 'SET_LIVE_SYNCED'; ts: string; error?: string | null }
   | { type: 'SET_LIVE_CONNECTION'; connection: ConnectionInfo | null }
   | { type: 'MERGE_INBOX_THREADS'; threads: ApiInboxThread[] }
+  | { type: 'MERGE_OUTREACH_THREADS'; threads: OutreachThreadRow[] }
+  | {
+      type: 'MERGE_OUTREACH_SQL_MESSAGES'
+      payload: {
+        conversationId: string
+        messages: OutreachMessageRow[]
+      }
+    }
   | { type: 'MERGE_GMAIL_THREADS'; threads: GmailThreadMeta[]; emailAccountId: string }
   | {
       type: 'MERGE_GMAIL_MESSAGES'
@@ -306,7 +330,7 @@ const initialState: AppState = {
   influencers: seedInfluencers,
   collections: seedCollections,
   myCreatorIds: seedMyCreatorIds,
-  campaigns: seedCampaigns,
+  campaigns: [],
   templates: seedTemplates,
   whatsAppNumbers: seedWhatsAppNumbers,
   emailAccounts: seedEmailAccounts,
@@ -317,7 +341,7 @@ const initialState: AppState = {
   analytics: seedAnalytics,
   team: seedTeam,
   activeTab: 'home',
-  selectedCampaignId: seedCampaigns[0]?.id ?? null,
+  selectedCampaignId: null,
   brandFilter: 'all',
   selectedConversationId: null,
   toasts: [],
@@ -391,6 +415,47 @@ function normPhone(s: string): string {
   return (s || '').replace(/\D/g, '')
 }
 
+function mapDbAudienceSource(value: string): AudienceSource {
+  if (value === 'collection') return 'collection'
+  if (value === 'my_creators') return 'my_creators'
+  if (value === 'roster') return 'campaign_roster'
+  return 'campaign_roster'
+}
+
+function mapOutreachCampaignRow(row: OutreachCampaignRow): Campaign {
+  return {
+    id: row.outreach_campaign_id,
+    organizationId: row.org_id,
+    brandId: row.brand_id ?? null,
+    name: row.name,
+    kind: row.kind === 'marketing' ? 'marketing' : 'outreach',
+    status:
+      row.status === 'active' || row.status === 'completed'
+        ? row.status
+        : 'draft',
+    audienceSource: mapDbAudienceSource(row.audience_type),
+    collectionId:
+      row.audience_type === 'collection' ? row.audience_ref_id ?? null : null,
+    influencerIds: [],
+    createdAt: new Date(Number(row.date_added) * 1000).toISOString(),
+    sentCount: Number(row.sent_count ?? 0),
+    failedCount: Number(row.failed_count ?? 0),
+    recipientCount: Number(row.recipient_count ?? 0),
+    description: row.description ?? null,
+    source: 'db',
+  }
+}
+
+function sqlConversationId(threadId: string) {
+  return `sql_${threadId}`
+}
+
+function mapOutreachMedium(medium: string): OutreachChannel {
+  if (medium === 'gmail') return 'email'
+  if (medium === 'instagram') return 'instagram'
+  return 'whatsapp'
+}
+
 function findInfluencerByPhone(
   influencers: Influencer[],
   phoneDigits: string,
@@ -424,6 +489,44 @@ function mapMediaKind(
   if (t === 'document' || (mime || '').startsWith('application/')) return 'document'
   if (t === 'sticker') return 'sticker'
   return null
+}
+
+function parseSqlJson<T>(value: unknown): T | null {
+  if (value == null || value === '') return null
+  if (typeof value === 'object') return value as T
+  try {
+    return JSON.parse(String(value)) as T
+  } catch {
+    return null
+  }
+}
+
+function mapSqlMessageMedia(m: OutreachMessageRow): Pick<
+  Message,
+  'mediaId' | 'mediaMime' | 'mediaKind' | 'caption' | 'reactions'
+> {
+  const attachments =
+    parseSqlJson<OutreachMessageAttachment[]>(m.attachments) ||
+    (Array.isArray(m.attachments) ? m.attachments : [])
+  const first = attachments[0]
+  const metadata = parseSqlJson<Record<string, unknown>>(m.metadata)
+  const waType =
+    (first?.type as string | undefined) ||
+    (metadata?.wa_type as string | undefined) ||
+    m.message_type
+
+  const out: Pick<Message, 'mediaId' | 'mediaMime' | 'mediaKind' | 'caption' | 'reactions'> = {}
+  if (first?.provider_media_id) {
+    out.mediaId = first.provider_media_id
+    out.mediaMime = first.mime_type || null
+    out.mediaKind = mapMediaKind(waType, first.mime_type)
+    out.caption = first.caption || null
+  }
+  const emoji = metadata?.emoji
+  if (typeof emoji === 'string' && emoji) {
+    out.reactions = [{ by: 'them', emoji, at: m.provider_created_at || nowIso() }]
+  }
+  return out
 }
 
 export function connectionMode(state: Pick<AppState, 'whatsAppNumbers' | 'emailAccounts' | 'instagramAccounts'>): ConnectionMode {
@@ -468,7 +571,7 @@ function touchConversation(
       ...conversations,
       {
         id: opts.convId,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         channel: opts.channel,
         phoneNumberId: opts.phoneNumberId,
         emailAccountId: opts.emailAccountId,
@@ -557,7 +660,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'CONNECT_WHATSAPP': {
       const number: WhatsAppNumber = {
         id: uid('wa'),
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         displayName: action.payload.displayName,
         phoneDisplay: action.payload.phoneDisplay,
         phoneNumberId: action.payload.phoneNumberId,
@@ -578,7 +681,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'CONNECT_EMAIL': {
       const account: EmailAccount = {
         id: uid('em'),
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         fromName: action.payload.fromName,
         fromEmail: action.payload.fromEmail,
         provider: action.payload.provider,
@@ -609,7 +712,7 @@ function reducer(state: AppState, action: Action): AppState {
       const email = action.payload.emailAddress || existing?.fromEmail || ''
       const account: EmailAccount = {
         id: existing?.id || uid('em'),
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         fromName: existing?.fromName || email.split('@')[0] || 'Google account',
         fromEmail: email,
         provider: 'gmail',
@@ -626,7 +729,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'CONNECT_INSTAGRAM': {
       const account: InstagramAccount = {
         id: uid('ig'),
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         handle: action.payload.handle.replace(/^@/, ''),
         displayName: action.payload.displayName,
         igUserId: action.payload.igUserId,
@@ -666,7 +769,7 @@ function reducer(state: AppState, action: Action): AppState {
       const isEmail = action.payload.channel === 'email'
       const template: Template = {
         id: action.payload.id,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         brandId: action.payload.brandId,
         channel: action.payload.channel,
         name: action.payload.name,
@@ -727,7 +830,7 @@ function reducer(state: AppState, action: Action): AppState {
       const channel: CampaignChannel = {
         id: uid('ch'),
         campaignId: action.payload.campaignId,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         channel: action.payload.channel,
         phoneNumberId: action.payload.phoneNumberId,
         emailAccountId: action.payload.emailAccountId,
@@ -743,7 +846,10 @@ function reducer(state: AppState, action: Action): AppState {
       const channels = state.channels.map((ch) =>
         ch.campaignId === campaignId ? { ...ch, selectedInfluencerIds: influencerIds } : ch,
       )
-      return { ...state, channels }
+      const campaigns = state.campaigns.map((c) =>
+        c.id === campaignId ? { ...c, influencerIds } : c,
+      )
+      return { ...state, channels, campaigns }
     }
     case 'UPDATE_CHANNEL':
       return {
@@ -780,7 +886,7 @@ function reducer(state: AppState, action: Action): AppState {
         channels.push({
           id,
           campaignId,
-          organizationId: ORG_ID,
+          organizationId: resolveOrgId(),
           channel,
           variableMapping: {},
           selectedInfluencerIds: influencerIds,
@@ -899,7 +1005,7 @@ function reducer(state: AppState, action: Action): AppState {
         for (const influencerId of influencerIds) {
           const influencer = state.influencers.find((i) => i.id === influencerId)
           if (!influencer) continue
-          const convId = conversationKey(ORG_ID, channel, cfg.accountId, influencerId)
+          const convId = conversationKey(resolveOrgId(), channel, cfg.accountId, influencerId)
           const bindings = mergeBindings(template.bindings, cfg.variableMapping)
           const resolveCtx = {
             org: state.organization,
@@ -929,7 +1035,7 @@ function reducer(state: AppState, action: Action): AppState {
           messages.push({
             id: uid('msg'),
             conversationId: convId,
-            organizationId: ORG_ID,
+            organizationId: resolveOrgId(),
             channel,
             campaignId,
             direction: 'outbound',
@@ -1069,14 +1175,14 @@ function reducer(state: AppState, action: Action): AppState {
           const influencer = state.influencers.find((i) => i.id === influencerId)
           if (!influencer) continue
 
-          const convId = conversationKey(ORG_ID, channel.channel, accountId, influencerId)
+          const convId = conversationKey(resolveOrgId(), channel.channel, accountId, influencerId)
           const ts = nowIso()
           const existingConv = conversations.find((c) => c.id === convId)
 
           if (!existingConv) {
             conversations.push({
               id: convId,
-              organizationId: ORG_ID,
+              organizationId: resolveOrgId(),
               channel: channel.channel,
               phoneNumberId: channel.phoneNumberId,
               emailAccountId: channel.emailAccountId,
@@ -1123,7 +1229,7 @@ function reducer(state: AppState, action: Action): AppState {
           messages.push({
             id: uid('msg'),
             conversationId: convId,
-            organizationId: ORG_ID,
+            organizationId: resolveOrgId(),
             channel: channel.channel,
             campaignId: channel.campaignId,
             direction: 'outbound',
@@ -1195,7 +1301,7 @@ function reducer(state: AppState, action: Action): AppState {
       const msg: Message = {
         id: uid('msg'),
         conversationId: conv.id,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         channel: conv.channel,
         campaignId: conv.lastCampaignId,
         direction: 'inbound',
@@ -1283,7 +1389,7 @@ function reducer(state: AppState, action: Action): AppState {
       const msg: Message = {
         id: action.msgId ?? uid('msg'),
         conversationId: conv.id,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         channel: conv.channel,
         direction: 'outbound',
         body: action.body,
@@ -1334,7 +1440,7 @@ function reducer(state: AppState, action: Action): AppState {
       const id = uid('camp')
       const campaign: Campaign = {
         id,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         brandId: action.payload.brandId,
         name: action.payload.name,
         kind: 'outreach',
@@ -1369,6 +1475,81 @@ function reducer(state: AppState, action: Action): AppState {
         selectedCampaignId: id,
       }
     }
+    case 'HYDRATE_OUTREACH_CAMPAIGNS': {
+      const mapped = action.campaigns.map(mapOutreachCampaignRow)
+      const localDrafts = state.campaigns.filter((c) => c.source !== 'db')
+      const merged = [...mapped, ...localDrafts].sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      )
+      const analytics = mapped.map((c) => ({
+        campaignId: c.id,
+        whatsapp: emptyMetrics(),
+        email: emptyMetrics(),
+        instagram: emptyMetrics(),
+      }))
+      return {
+        ...state,
+        campaigns: merged,
+        analytics,
+        selectedCampaignId: state.selectedCampaignId ?? merged[0]?.id ?? null,
+      }
+    }
+    case 'HYDRATE_OUTREACH_CHANNELS': {
+      const waNumbers = action.channels
+        .filter((c) => c.medium === 'whatsapp' && c.phone_number_id)
+        .map((c) => ({
+          id: c.outreach_channel_id,
+          organizationId: c.org_id,
+          displayName: c.display_name || c.account_label || 'WhatsApp',
+          phoneDisplay: c.display_phone_number || c.account_address || '7706947747',
+          phoneNumberId: c.phone_number_id!,
+          wabaId: c.waba_id || '',
+          businessId: '',
+          qualityRating: 'GREEN' as const,
+          messagingTier: 'TIER_10K' as const,
+          connectedAt: new Date(Number(c.date_added) * 1000).toISOString(),
+        }))
+      return {
+        ...state,
+        whatsAppNumbers: waNumbers,
+      }
+    }
+    case 'MERGE_OUTREACH_CAMPAIGNS': {
+      const mapped = action.campaigns.map(mapOutreachCampaignRow)
+      const byId = new Map(state.campaigns.map((c) => [c.id, c]))
+      for (const c of mapped) {
+        const existing = byId.get(c.id)
+        if (existing) {
+          byId.set(c.id, {
+            ...existing,
+            ...c,
+            influencerIds:
+              existing.influencerIds.length > 0
+                ? existing.influencerIds
+                : c.influencerIds,
+          })
+        } else {
+          byId.set(c.id, c)
+        }
+      }
+      const merged = [...byId.values()].sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      )
+      const existingAnalytics = new Set(state.analytics.map((a) => a.campaignId))
+      const newAnalytics = mapped
+        .filter((c) => !existingAnalytics.has(c.id))
+        .map((c) => ({
+          campaignId: c.id,
+          whatsapp: emptyMetrics(),
+          email: emptyMetrics(),
+          instagram: emptyMetrics(),
+        }))
+      return {
+        ...state,
+        campaigns: merged,
+        analytics: [...newAnalytics, ...state.analytics],
+      }
+    }
     case 'LOG_WHATSAPP_SENDS': {
       const ts = nowIso()
       let influencers = [...state.influencers]
@@ -1398,7 +1579,7 @@ function reducer(state: AppState, action: Action): AppState {
           influencers.push(inf)
         }
         const convId = conversationKey(
-          ORG_ID,
+          resolveOrgId(),
           'whatsapp',
           phoneNumberId || 'wa_default',
           inf.id,
@@ -1407,7 +1588,7 @@ function reducer(state: AppState, action: Action): AppState {
         if (!existing) {
           conversations.unshift({
             id: convId,
-            organizationId: ORG_ID,
+            organizationId: resolveOrgId(),
             channel: 'whatsapp',
             phoneNumberId,
             influencerId: inf.id,
@@ -1439,7 +1620,7 @@ function reducer(state: AppState, action: Action): AppState {
         messages.push({
           id: msgId,
           conversationId: convId,
-          organizationId: ORG_ID,
+          organizationId: resolveOrgId(),
           channel: 'whatsapp',
           campaignId,
           direction: 'outbound',
@@ -1466,7 +1647,7 @@ function reducer(state: AppState, action: Action): AppState {
       const id = uid('col')
       const collection: CollectionList = {
         id,
-        organizationId: ORG_ID,
+        organizationId: resolveOrgId(),
         brandId: action.payload.brandId,
         name: action.payload.name,
         campaignId: null,
@@ -1501,9 +1682,9 @@ function reducer(state: AppState, action: Action): AppState {
             ...whatsAppNumbers,
             {
               id: uid('wa'),
-              organizationId: ORG_ID,
+              organizationId: resolveOrgId(),
               displayName: 'Reelax Live WhatsApp',
-              phoneDisplay: '',
+              phoneDisplay: '7706947747',
               phoneNumberId: conn.phone_number_id,
               wabaId: conn.waba_id ?? '',
               businessId: '',
@@ -1518,6 +1699,186 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         whatsAppNumbers,
         liveInbox: { ...state.liveInbox, connection: conn },
+      }
+    }
+    case 'MERGE_OUTREACH_THREADS': {
+      const threads = action.threads || []
+      if (threads.length === 0) return state
+      const defaultPnid = state.liveInbox.connection?.phone_number_id ?? undefined
+      const gmailAcc = state.emailAccounts.find((a) => a.provider === 'gmail')
+      let influencers = [...state.influencers]
+      let conversations = [...state.conversations]
+
+      for (const t of threads) {
+        const channel = mapOutreachMedium(t.medium)
+        const convId = sqlConversationId(t.outreach_thread_id)
+        let inf: Influencer | undefined
+
+        if (channel === 'whatsapp') {
+          const phone = normPhone(t.contact_phone || t.provider_thread_id)
+          if (!phone) continue
+          inf = findInfluencerByPhone(influencers, phone)
+          if (!inf) {
+            inf = {
+              id: `ext_${phone}`,
+              name: (t.contact_name && t.contact_name.trim()) || phone,
+              handle: '',
+              phone,
+              email: '',
+              followers: '—',
+              niche: 'External',
+            }
+            influencers = [...influencers, inf]
+          }
+        } else if (channel === 'email') {
+          const email = (t.contact_email || t.provider_thread_id || '')
+            .trim()
+            .toLowerCase()
+          if (!email) continue
+          inf = influencers.find(
+            (i) => (i.email || '').toLowerCase() === email,
+          )
+          if (!inf) {
+            inf = {
+              id: `ext_em_${email.replace(/[^a-z0-9]/g, '_')}`,
+              name: (t.contact_name && t.contact_name.trim()) || email.split('@')[0],
+              handle: '',
+              phone: '',
+              email,
+              followers: '—',
+              niche: 'External',
+            }
+            influencers = [...influencers, inf]
+          }
+        } else {
+          continue
+        }
+
+        if (!inf) continue
+        const lastAt = t.last_message_at || nowIso()
+        const preview = (t.last_preview || t.subject || '').slice(0, 80)
+        const existing = conversations.find((c) => c.id === convId)
+
+        if (!existing) {
+          conversations = [
+            ...conversations,
+            {
+              id: convId,
+              organizationId: resolveOrgId(),
+              channel,
+              phoneNumberId:
+                channel === 'whatsapp'
+                  ? defaultPnid || 'wa_live'
+                  : undefined,
+              emailAccountId:
+                channel === 'email' ? gmailAcc?.id : undefined,
+              influencerId: inf.id,
+              campaignIds: [],
+              status: (t.status as Conversation['status']) || 'open',
+              lastMessageAt: lastAt,
+              unreadCount: t.unread_count || 0,
+              lastPreview: preview,
+              lastInboundAt: t.last_inbound_at ?? undefined,
+              isLive: true,
+              outreachThreadId: t.outreach_thread_id,
+              providerThreadId: t.provider_thread_id,
+              gmailThreadId:
+                channel === 'email' ? t.provider_thread_id : undefined,
+            },
+          ]
+        } else {
+          conversations = conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  lastMessageAt:
+                    lastAt > c.lastMessageAt ? lastAt : c.lastMessageAt,
+                  lastPreview: preview || c.lastPreview,
+                  lastInboundAt: t.last_inbound_at ?? c.lastInboundAt,
+                  unreadCount:
+                    state.selectedConversationId === c.id
+                      ? 0
+                      : Math.max(c.unreadCount, t.unread_count || 0),
+                  isLive: true,
+                  outreachThreadId: t.outreach_thread_id,
+                  providerThreadId: t.provider_thread_id,
+                  status: (t.status as Conversation['status']) || c.status,
+                }
+              : c,
+          )
+        }
+      }
+
+      return { ...state, influencers, conversations }
+    }
+    case 'MERGE_OUTREACH_SQL_MESSAGES': {
+      const { conversationId, messages: apiMsgs } = action.payload
+      if (!apiMsgs?.length) return state
+      const conv = state.conversations.find((c) => c.id === conversationId)
+      if (!conv) return state
+
+      const existingIds = new Set(
+        state.messages
+          .filter((m) => m.conversationId === conversationId)
+          .map((m) => m.metaMessageId)
+          .filter(Boolean),
+      )
+
+      const newMsgs: Message[] = []
+      for (const m of apiMsgs) {
+        const mid = m.provider_message_id || m.outreach_message_id
+        if (!mid || existingIds.has(mid)) continue
+        const direction: Message['direction'] =
+          m.direction === 'inbound' ? 'inbound' : 'outbound'
+        const media = mapSqlMessageMedia(m)
+        let status = mapLiveStatus(m.message_status, direction)
+        if (m.read_at) status = 'read'
+        else if (m.delivered_at) status = 'delivered'
+        else if (m.failed_at || m.error_message) status = 'failed'
+
+        newMsgs.push({
+          id: uid('msg'),
+          conversationId,
+          organizationId: resolveOrgId(),
+          channel: conv.channel,
+          direction,
+          subject: m.subject || undefined,
+          body:
+            m.text_body ||
+            m.html_body ||
+            (m.error_message ? `[failed] ${m.error_message}` : ''),
+          status,
+          isTemplate: m.message_type === 'template',
+          createdAt: m.provider_created_at || nowIso(),
+          metaMessageId: mid,
+          ...media,
+        })
+      }
+
+      if (newMsgs.length === 0) return state
+
+      const last = newMsgs[newMsgs.length - 1]
+      return {
+        ...state,
+        messages: [...state.messages, ...newMsgs].sort((a, b) =>
+          a.createdAt.localeCompare(b.createdAt),
+        ),
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId
+            ? {
+                ...c,
+                lastMessageAt: last.createdAt,
+                lastPreview: last.body.slice(0, 80),
+                lastInboundAt:
+                  last.direction === 'inbound' ? last.createdAt : c.lastInboundAt,
+                unreadCount:
+                  c.id === state.selectedConversationId
+                    ? 0
+                    : c.unreadCount +
+                      newMsgs.filter((m) => m.direction === 'inbound').length,
+              }
+            : c,
+        ),
       }
     }
     case 'MERGE_INBOX_THREADS': {
@@ -1544,14 +1905,14 @@ function reducer(state: AppState, action: Action): AppState {
           influencers = [...influencers, inf]
         }
         const phoneNumberId = t.phone_number_id || defaultPnid || 'wa_live'
-        const convId = conversationKey(ORG_ID, 'whatsapp', phoneNumberId, inf.id)
+        const convId = conversationKey(resolveOrgId(), 'whatsapp', phoneNumberId, inf.id)
         const existing = conversations.find((c) => c.id === convId)
         if (!existing) {
           conversations = [
             ...conversations,
             {
               id: convId,
-              organizationId: ORG_ID,
+              organizationId: resolveOrgId(),
               channel: 'whatsapp',
               phoneNumberId,
               influencerId: inf.id,
@@ -1615,7 +1976,7 @@ function reducer(state: AppState, action: Action): AppState {
           influencers = [...influencers, inf]
         }
         const convId = conversationKey(
-          ORG_ID,
+          resolveOrgId(),
           'email',
           action.emailAccountId,
           inf.id,
@@ -1627,7 +1988,7 @@ function reducer(state: AppState, action: Action): AppState {
             ...conversations,
             {
               id: convId,
-              organizationId: ORG_ID,
+              organizationId: resolveOrgId(),
               channel: 'email',
               emailAccountId: action.emailAccountId,
               influencerId: inf.id,
@@ -1686,7 +2047,7 @@ function reducer(state: AppState, action: Action): AppState {
         newMsgs.push({
           id: uid('msg'),
           conversationId,
-          organizationId: ORG_ID,
+          organizationId: resolveOrgId(),
           channel: 'email',
           direction,
           subject: m.subject || undefined,
@@ -1748,7 +2109,7 @@ function reducer(state: AppState, action: Action): AppState {
           (c) => c.influencerId === inf.id && c.channel === 'whatsapp' && c.isLive,
         )?.phoneNumberId ||
         'wa_live'
-      const convId = conversationKey(ORG_ID, 'whatsapp', pnid, inf.id)
+      const convId = conversationKey(resolveOrgId(), 'whatsapp', pnid, inf.id)
       const conv = state.conversations.find((c) => c.id === convId)
       if (!conv) return state
 
@@ -1778,7 +2139,7 @@ function reducer(state: AppState, action: Action): AppState {
         newMsgs.push({
           id: m.id || uid('msg'),
           conversationId: convId,
-          organizationId: ORG_ID,
+          organizationId: resolveOrgId(),
           channel: 'whatsapp',
           direction: m.direction,
           body,
@@ -2029,7 +2390,31 @@ interface StoreContextValue {
       audienceSource: AudienceSource
       collectionId: string | null
       influencerIds: string[]
-    }) => void
+    }) => Promise<string | null>
+    sendOutreachCampaignLive: (payload: {
+      campaignId: string
+      influencerIds: string[]
+      whatsapp?: {
+        phoneNumberId: string
+        templateId: string
+        variableMapping: Record<string, string>
+      }
+      email?: {
+        emailAccountId: string
+        templateId: string
+        variableMapping: Record<string, string>
+      }
+    }) => Promise<{ sent: number; failed: number }>
+    /** @deprecated use sendOutreachCampaignLive */
+    sendOutreachLive: (payload: {
+      campaignId: string
+      influencerIds: string[]
+      whatsapp: {
+        phoneNumberId: string
+        templateId: string
+        variableMapping: Record<string, string>
+      }
+    }) => Promise<{ sent: number; failed: number }>
     createCollection: (payload: {
       name: string
       brandId: string | null
@@ -2067,60 +2452,71 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null)
 
-const STORAGE_KEY = 'reelax-outreach-v2'
+const PREFS_STORAGE_KEY = 'reelax-outreach-prefs'
 
-/**
- * Persist a subset of state to localStorage so the demo survives reloads.
- * Volatile UI-only fields (toasts, modal open flags) are stripped.
- */
-function loadPersisted(): AppState {
-  if (typeof window === 'undefined') return initialState
+type PersistedPrefs = Pick<AppState, 'prefs' | 'cannedReplies' | 'autoLabelRules'>
+
+function loadPrefs(): PersistedPrefs | null {
+  if (typeof window === 'undefined') return null
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return initialState
-    const parsed = JSON.parse(raw) as Partial<AppState>
-    return {
-      ...initialState,
-      ...parsed,
-      // Never persist these
-      toasts: [],
-      connectModalOpen: false,
-      connectStep: 0,
-      emailModalOpen: false,
-    }
+    const raw = window.localStorage.getItem(PREFS_STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as PersistedPrefs
   } catch {
-    return initialState
+    return null
   }
 }
 
-function persistState(state: AppState) {
+function persistPrefs(state: AppState) {
   if (typeof window === 'undefined') return
   try {
-    const { toasts: _t, connectModalOpen: _cm, emailModalOpen: _em, connectStep: _cs, ...rest } = state
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rest))
+    const payload: PersistedPrefs = {
+      prefs: state.prefs,
+      cannedReplies: state.cannedReplies,
+      autoLabelRules: state.autoLabelRules,
+    }
+    window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(payload))
   } catch {
-    /* quota / private mode — ignore */
+    /* quota / private mode */
+  }
+}
+
+function buildInitialState(): AppState {
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.removeItem('reelax-outreach-v2')
+    } catch {
+      /* ignore */
+    }
+  }
+  const prefs = loadPrefs()
+  return {
+    ...initialState,
+    ...(prefs ?? {}),
+    toasts: [],
+    connectModalOpen: false,
+    connectStep: 0,
+    emailModalOpen: false,
   }
 }
 
 export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined as unknown as AppState, loadPersisted)
+  const [state, dispatch] = useReducer(reducer, undefined as unknown as AppState, buildInitialState)
 
-  // Persist on any change (debounced via requestIdleCallback if available)
   useEffect(() => {
     const idle =
       (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback
     if (idle) {
-      const id = idle(() => persistState(state))
+      const id = idle(() => persistPrefs(state))
       return () => {
         const cancel = (window as unknown as { cancelIdleCallback?: (id: number) => void })
           .cancelIdleCallback
         cancel?.(id)
       }
     }
-    const t = window.setTimeout(() => persistState(state), 100)
+    const t = window.setTimeout(() => persistPrefs(state), 100)
     return () => window.clearTimeout(t)
-  }, [state])
+  }, [state.prefs, state.cannedReplies, state.autoLabelRules])
 
   const toast = useCallback((message: string, variant: ToastItem['variant'] = 'info') => {
     dispatch({ type: 'ADD_TOAST', toast: { message, variant } })
@@ -2239,20 +2635,51 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
   }, [state])
 
   const doLiveSync = useCallback(async () => {
+    const orgId = resolveOrgId()
     try {
-      const threads = await listWhatsAppInbox()
-      dispatch({ type: 'MERGE_INBOX_THREADS', threads })
+      const sqlThreads = await listOutreachThreads({ org_id: orgId, limit: 200 })
+      if (sqlThreads.length > 0) {
+        dispatch({ type: 'MERGE_OUTREACH_THREADS', threads: sqlThreads })
+      } else {
+        const threads = await listWhatsAppInbox(orgId)
+        dispatch({ type: 'MERGE_INBOX_THREADS', threads })
+      }
 
       const cur = stateRef.current
       const sel = cur.conversations.find(
         (c) => c.id === cur.selectedConversationId,
       )
-      if (sel && sel.channel === 'whatsapp' && sel.isLive) {
+
+      if (sel?.outreachThreadId) {
+        try {
+          const msgs = await listOutreachThreadMessages({
+            outreach_thread_id: sel.outreachThreadId,
+            limit: 500,
+          })
+          dispatch({
+            type: 'MERGE_OUTREACH_SQL_MESSAGES',
+            payload: { conversationId: sel.id, messages: msgs },
+          })
+          if (sel.channel === 'whatsapp') {
+            const inf = cur.influencers.find((i) => i.id === sel.influencerId)
+            const phoneDigits = normPhone(inf?.phone || '')
+            if (phoneDigits) {
+              try {
+                await getWhatsAppInboxMessages(phoneDigits, orgId)
+              } catch {
+                /* mark-read side effect only */
+              }
+            }
+          }
+        } catch {
+          /* per-thread errors are non-fatal */
+        }
+      } else if (sel && sel.channel === 'whatsapp' && sel.isLive) {
         const inf = cur.influencers.find((i) => i.id === sel.influencerId)
         const phoneDigits = normPhone(inf?.phone || '')
         if (phoneDigits) {
           try {
-            const msgs = await getWhatsAppInboxMessages(phoneDigits)
+            const msgs = await getWhatsAppInboxMessages(phoneDigits, orgId)
             dispatch({
               type: 'MERGE_INBOX_MESSAGES',
               payload: {
@@ -2265,48 +2692,26 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             /* per-thread errors are non-fatal */
           }
         }
-      }
-      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: null })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : (e as Error).message
-      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: msg })
-    }
-
-    // Gmail polling — only runs if a Gmail account is connected with a userId.
-    const curAfter = stateRef.current
-    const em = curAfter.emailAccounts.find(
-      (a) => a.provider === 'gmail' && a.userId,
-    )
-    if (em && em.userId) {
-      try {
-        const res = await listGmailThreads({ user_id: em.userId, limit: 40 })
-        if (res && res.length > 0) {
-          dispatch({
-            type: 'MERGE_GMAIL_THREADS',
-            threads: res,
-            emailAccountId: em.id,
-          })
-        }
-
-        const selEmail = stateRef.current.conversations.find(
-          (c) => c.id === stateRef.current.selectedConversationId,
+      } else if (
+        sel &&
+        sel.channel === 'email' &&
+        sel.isLive &&
+        sel.gmailThreadId
+      ) {
+        const em = cur.emailAccounts.find(
+          (a) => a.provider === 'gmail' && a.userId,
         )
-        if (
-          selEmail &&
-          selEmail.channel === 'email' &&
-          selEmail.isLive &&
-          selEmail.gmailThreadId
-        ) {
+        if (em?.userId) {
           try {
             const thread = await getGmailThread({
-              thread_id: selEmail.gmailThreadId,
+              thread_id: sel.gmailThreadId,
               user_id: em.userId,
             })
             if (thread?.messages?.length) {
               dispatch({
                 type: 'MERGE_GMAIL_MESSAGES',
                 payload: {
-                  conversationId: selEmail.id,
+                  conversationId: sel.id,
                   threadId: thread.thread_id,
                   messages: thread.messages,
                 },
@@ -2316,11 +2721,238 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             /* per-thread errors are non-fatal */
           }
         }
+      }
+
+      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: null })
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : (e as Error).message
+      dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: msg })
+    }
+
+    const curAfter = stateRef.current
+    const em = curAfter.emailAccounts.find(
+      (a) => a.provider === 'gmail' && a.userId,
+    )
+    if (em?.userId && !curAfter.conversations.some((c) => c.outreachThreadId)) {
+      try {
+        const res = await listGmailThreads({ user_id: em.userId, limit: 40 })
+        if (res?.length) {
+          dispatch({
+            type: 'MERGE_GMAIL_THREADS',
+            threads: res,
+            emailAccountId: em.id,
+          })
+        }
       } catch {
-        /* Gmail sync errors are non-fatal for the WA live indicator */
+        /* Gmail sync errors are non-fatal */
       }
     }
   }, [])
+
+  const sendOutreachCampaignLive = useCallback(
+    async (payload: {
+      campaignId: string
+      influencerIds: string[]
+      whatsapp?: {
+        phoneNumberId: string
+        templateId: string
+        variableMapping: Record<string, string>
+      }
+      email?: {
+        emailAccountId: string
+        templateId: string
+        variableMapping: Record<string, string>
+      }
+    }) => {
+      const st = stateRef.current
+      const campaign = st.campaigns.find((c) => c.id === payload.campaignId) ?? null
+      const brand = campaign?.brandId
+        ? st.brands.find((b) => b.id === campaign.brandId) ?? null
+        : null
+
+      const successful: Array<{
+        to: string
+        body: string
+        name?: string
+        wamid?: string
+      }> = []
+      let sent = 0
+      let failed = 0
+
+      if (payload.whatsapp) {
+        const template = st.templates.find((t) => t.id === payload.whatsapp!.templateId)
+        if (!template || template.channel !== 'whatsapp') {
+          throw new Error('WhatsApp template not found')
+        }
+        if (template.status !== 'APPROVED') {
+          throw new Error('WhatsApp template must be approved before sending')
+        }
+        const bindings = mergeBindings(
+          template.bindings,
+          payload.whatsapp.variableMapping,
+        )
+
+        for (const influencerId of payload.influencerIds) {
+          const influencer = st.influencers.find((i) => i.id === influencerId)
+          if (!influencer) {
+            failed += 1
+            continue
+          }
+          const phoneDigits = normPhone(influencer.phone)
+          if (!phoneDigits) {
+            failed += 1
+            continue
+          }
+
+          const ctx = {
+            org: st.organization,
+            brand,
+            campaign,
+            influencer,
+          }
+          const preview = renderWithBindings(template.body, bindings, ctx)
+          const bodyParams = bodyParamsForBindings(bindings, ctx)
+
+          try {
+            const res = (await sendWhatsAppTemplate({
+              to: phoneDigits,
+              template_name: template.name,
+              language_code: template.language || 'en_US',
+              bodyParams: bodyParams.length ? bodyParams : undefined,
+              phone_number_id: payload.whatsapp.phoneNumberId,
+              preview_body: preview,
+              org_id: resolveOrgId(),
+              outreach_campaign_id: payload.campaignId,
+            })) as { messages?: Array<{ id?: string }> } | undefined
+            const wamid = res?.messages?.[0]?.id
+            successful.push({
+              to: phoneDigits,
+              body: preview,
+              name: influencer.name,
+              wamid,
+            })
+            sent += 1
+          } catch {
+            failed += 1
+          }
+        }
+
+        if (successful.length) {
+          dispatch({
+            type: 'LOG_WHATSAPP_SENDS',
+            payload: {
+              sends: successful,
+              phoneNumberId: payload.whatsapp.phoneNumberId,
+              campaignId: payload.campaignId,
+            },
+          })
+        }
+      }
+
+      if (payload.email) {
+        const template = st.templates.find((t) => t.id === payload.email!.templateId)
+        if (!template || template.channel !== 'email') {
+          throw new Error('Email template not found')
+        }
+        const emailAcc = st.emailAccounts.find(
+          (a) => a.id === payload.email!.emailAccountId,
+        )
+        const bindings = mergeBindings(
+          template.bindings,
+          payload.email.variableMapping,
+        )
+
+        for (const influencerId of payload.influencerIds) {
+          const influencer = st.influencers.find((i) => i.id === influencerId)
+          if (!influencer?.email) {
+            failed += 1
+            continue
+          }
+          const ctx = {
+            org: st.organization,
+            brand,
+            campaign,
+            influencer,
+          }
+          const vars: Record<string, string> = {}
+          for (const b of bindings) {
+            vars[b.slot] = resolveField(b.field, ctx, b.literal)
+          }
+          if (influencer.name) {
+            vars.name = influencer.name
+            vars.first_name = influencer.name.split(' ')[0] || influencer.name
+          }
+
+          try {
+            await sendGmailTemplate({
+              to: influencer.email,
+              template_name: template.name,
+              variables: vars,
+              user_id: emailAcc?.userId,
+              org_id: resolveOrgId(),
+            })
+            sent += 1
+          } catch {
+            failed += 1
+          }
+        }
+      }
+
+      const prevSent = campaign?.sentCount ?? 0
+      const prevFailed = campaign?.failedCount ?? 0
+
+      try {
+        const row = await updateOutreachCampaign({
+          outreach_campaign_id: payload.campaignId,
+          org_id: resolveOrgId(),
+          status: 'active',
+          sent_count: prevSent + sent,
+          failed_count: prevFailed + failed,
+          recipient_count: payload.influencerIds.length,
+        })
+        if (row) {
+          dispatch({ type: 'MERGE_OUTREACH_CAMPAIGNS', campaigns: [row] })
+        }
+      } catch {
+        /* counts may refresh on next poll */
+      }
+
+      await doLiveSync()
+
+      for (const influencerId of payload.influencerIds) {
+        const conv = stateRef.current.conversations.find(
+          (c) =>
+            c.influencerId === influencerId &&
+            c.isLive &&
+            c.outreachThreadId,
+        )
+        if (!conv?.outreachThreadId) continue
+        try {
+          await createOutreachThreadLink({
+            outreach_thread_id: conv.outreachThreadId,
+            entity_type: 'outreach_campaign',
+            entity_id: payload.campaignId,
+            link_source: 'auto',
+            org_id: resolveOrgId(),
+          })
+          dispatch({
+            type: 'SET_SHARED_INFLUENCERS',
+            payload: {
+              campaignId: payload.campaignId,
+              influencerIds: payload.influencerIds,
+            },
+          })
+        } catch {
+          /* link may already exist */
+        }
+      }
+
+      return { sent, failed }
+    },
+    [doLiveSync],
+  )
+
+  const sendOutreachLive = sendOutreachCampaignLive
 
   const sendWhatsAppReplyLive = useCallback(
     async (conversationId: string, body: string) => {
@@ -2342,6 +2974,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
           to: phoneDigits,
           text: body,
           phone_number_id: conv.phoneNumberId,
+          org_id: resolveOrgId(),
         })
         // Trigger a fresh pull so we get delivery/read receipts sooner
         void doLiveSync()
@@ -2454,6 +3087,33 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Hydrate outreach campaigns + WhatsApp channels from MySQL.
+  useEffect(() => {
+    let cancelled = false
+    const org = resolveOrgId()
+    void listOutreachCampaigns(org)
+      .then((rows) => {
+        if (!cancelled) {
+          dispatch({ type: 'HYDRATE_OUTREACH_CAMPAIGNS', campaigns: rows })
+        }
+      })
+      .catch(() => {
+        /* SQL unavailable */
+      })
+    void listOutreachChannels({ org_id: org, medium: 'whatsapp' })
+      .then((channels) => {
+        if (!cancelled && channels.length > 0) {
+          dispatch({ type: 'HYDRATE_OUTREACH_CHANNELS', channels })
+        }
+      })
+      .catch(() => {
+        /* fall back to connection endpoint */
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Keep Gmail OAuth state in sync with emailAccounts so connectionMode,
@@ -2791,10 +3451,51 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         })
       },
       sendCampaign: (channelId) => dispatch({ type: 'SEND_CHANNELS', channelIds: [channelId] }),
-      createOutreachCampaign: (payload) => {
-        dispatch({ type: 'CREATE_OUTREACH_CAMPAIGN', payload })
-        toast('Outreach campaign created', 'success')
+      createOutreachCampaign: async (payload) => {
+        try {
+          const audienceType =
+            payload.audienceSource === 'collection'
+              ? 'collection'
+              : payload.audienceSource === 'my_creators'
+                ? 'my_creators'
+                : 'roster'
+          const row = await apiCreateOutreachCampaign({
+            name: payload.name,
+            brand_id: payload.brandId ?? undefined,
+            audience_type: audienceType,
+            audience_ref_id: payload.collectionId ?? undefined,
+            org_id: resolveOrgId(),
+          })
+          if (row) {
+            dispatch({ type: 'MERGE_OUTREACH_CAMPAIGNS', campaigns: [row] })
+            dispatch({
+              type: 'SELECT_CAMPAIGN',
+              campaignId: row.outreach_campaign_id,
+            })
+            dispatch({
+              type: 'SET_SHARED_INFLUENCERS',
+              payload: {
+                campaignId: row.outreach_campaign_id,
+                influencerIds: payload.influencerIds,
+              },
+            })
+            toast('Outreach campaign saved to database', 'success')
+            return row.outreach_campaign_id
+          }
+          dispatch({ type: 'CREATE_OUTREACH_CAMPAIGN', payload })
+          toast('Outreach campaign created locally', 'info')
+          return stateRef.current.selectedCampaignId
+        } catch (e) {
+          dispatch({ type: 'CREATE_OUTREACH_CAMPAIGN', payload })
+          toast(
+            e instanceof ApiError ? e.message : 'Saved locally (API unavailable)',
+            'info',
+          )
+          return stateRef.current.selectedCampaignId
+        }
       },
+      sendOutreachCampaignLive,
+      sendOutreachLive,
       createCollection: (payload) => {
         dispatch({ type: 'CREATE_COLLECTION', payload })
         toast('Collection list created', 'success')

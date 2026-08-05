@@ -28,7 +28,16 @@ export function CampaignsHub() {
   }, [state.campaigns, filter])
 
   const totals = useMemo(() => {
-    return state.analytics.reduce(
+    const fromDb = state.campaigns
+      .filter((c) => c.source === 'db')
+      .reduce(
+        (acc, c) => ({
+          sent: acc.sent + (c.sentCount ?? 0),
+          failed: acc.failed + (c.failedCount ?? 0),
+        }),
+        { sent: 0, failed: 0 },
+      )
+    const local = state.analytics.reduce(
       (acc, a) => ({
         sent: acc.sent + a.whatsapp.sent + a.email.sent,
         delivered: acc.delivered + a.whatsapp.delivered + a.email.delivered,
@@ -36,7 +45,14 @@ export function CampaignsHub() {
       }),
       { sent: 0, delivered: 0, replies: 0 },
     )
-  }, [state.analytics])
+    return {
+      sent: Math.max(local.sent, fromDb.sent),
+      delivered: local.delivered,
+      replies: local.replies,
+      failed: fromDb.failed,
+      dbCampaigns: state.campaigns.filter((c) => c.source === 'db').length,
+    }
+  }, [state.analytics, state.campaigns])
 
   if (detailId) {
     return <CampaignDetail campaignId={detailId} onBack={() => setDetailId(null)} />
@@ -119,6 +135,12 @@ export function CampaignsHub() {
               <div className="rx-quick-stat-label">Replies</div>
               <div className="rx-quick-stat-value">{totals.replies}</div>
             </div>
+            {totals.dbCampaigns > 0 ? (
+              <div className="rx-quick-stat">
+                <div className="rx-quick-stat-label">In database</div>
+                <div className="rx-quick-stat-value">{totals.dbCampaigns}</div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -171,7 +193,11 @@ export function CampaignsHub() {
         <div className="rx-campaigns-list">
           {campaigns.map((c) => {
             const analytics = state.analytics.find((a) => a.campaignId === c.id)
-            const sent = (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
+            const dbSent = c.source === 'db' ? (c.sentCount ?? 0) : null
+            const sent =
+              dbSent !== null
+                ? dbSent
+                : (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
             const replies = (analytics?.whatsapp.replied || 0) + (analytics?.email.replied || 0)
             const engagement = sent > 0 ? Math.round((replies / sent) * 100) : 0
             const channels = state.channels.filter((ch) => ch.campaignId === c.id)
@@ -195,8 +221,14 @@ export function CampaignsHub() {
                     {brand?.name || 'Org-level'} ·{' '}
                     <span className={`rx-badge ${c.status === 'active' ? 'dark' : ''}`}>
                       {c.status}
-                    </span>{' '}
-                    · {c.influencerIds.length} creators
+                    </span>
+                    {c.source === 'db' ? (
+                      <>
+                        {' '}
+                        · <span className="rx-badge db">SQL</span>
+                      </>
+                    ) : null}{' '}
+                    · {c.influencerIds.length || c.recipientCount || 0} creators
                   </div>
                 </div>
                 <div className="rx-camp-channels">
@@ -211,6 +243,12 @@ export function CampaignsHub() {
                 <div className="rx-camp-metric">
                   <div className="rx-camp-metric-label">Replies</div>
                   <div className="rx-camp-metric-value">{replies}</div>
+                </div>
+                <div className="rx-camp-metric">
+                  <div className="rx-camp-metric-label">Failed</div>
+                  <div className="rx-camp-metric-value">
+                    {c.source === 'db' ? (c.failedCount ?? 0) : '—'}
+                  </div>
                 </div>
                 <div className="rx-camp-metric" style={{ minWidth: 100 }}>
                   <div className="rx-camp-metric-label">Engagement</div>

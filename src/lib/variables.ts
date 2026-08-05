@@ -181,6 +181,16 @@ export function renderWithBindings(
   return out
 }
 
+/** Ordered Meta body parameters from slot bindings ({{1}}, {{2}}, …). */
+export function bodyParamsForBindings(
+  bindings: VariableBinding[],
+  ctx: ResolveContext,
+): string[] {
+  return [...bindings]
+    .sort((a, b) => Number(a.slot) - Number(b.slot))
+    .map((b) => resolveField(b.field, ctx, b.literal))
+}
+
 export function bindingToOverrideValue(b: VariableBinding): string {
   if (b.field === 'literal') return `literal:${b.literal ?? ''}`
   return b.field

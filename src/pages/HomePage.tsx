@@ -141,6 +141,8 @@ export function HomePage() {
     (c.labels || []).some((l) => l.toLowerCase().includes('hot')),
   ).length
   const activeCampaigns = state.campaigns.filter((c) => c.status === 'active').length
+  const dbCampaigns = state.campaigns.filter((c) => c.source === 'db').length
+  const liveInboxThreads = state.conversations.filter((c) => c.isLive).length
 
   // Recent activity — last 6 inbound messages across all channels
   const recentActivity = useMemo(() => {
@@ -240,8 +242,23 @@ export function HomePage() {
           <div className="rx-home-stat-label">
             <Sparkles size={12} /> Active campaigns
           </div>
-          <div className="rx-home-stat-value mono">{activeCampaigns}</div>
+          <div className="rx-home-stat-value mono">
+            {activeCampaigns}
+            {dbCampaigns > 0 ? (
+              <span className="rx-text-xs rx-muted" style={{ marginLeft: 6 }}>
+                ({dbCampaigns} in SQL)
+              </span>
+            ) : null}
+          </div>
         </div>
+        {liveInboxThreads > 0 ? (
+          <div className="rx-home-stat">
+            <div className="rx-home-stat-label">
+              <MessageCircle size={12} /> Live threads
+            </div>
+            <div className="rx-home-stat-value mono">{liveInboxThreads}</div>
+          </div>
+        ) : null}
       </div>
 
       {/* Per-channel cards */}

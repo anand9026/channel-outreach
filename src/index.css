@@ -8,27 +8,27 @@
   --font: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
-  /* Neutrals */
-  --bg: #fafaf9;
+  /* Neutrals — warm stone palette */
+  --bg: #f7f6f3;
   --surface: #ffffff;
-  --surface-2: #f4f4f3;
-  --surface-3: #ececeb;
-  --border: #ececeb;
-  --border-2: #e2e2e0;
-  --border-strong: #d4d4d1;
-  --text: #0a0a0a;
-  --text-2: #52525b;
-  --text-3: #a1a1a1;
-  --text-4: #d4d4d1;
+  --surface-2: #f3f2ef;
+  --surface-3: #eae8e4;
+  --border: #ebe9e5;
+  --border-2: #e0ddd8;
+  --border-strong: #d4d0ca;
+  --text: #1c1917;
+  --text-2: #57534e;
+  --text-3: #a8a29e;
+  --text-4: #d6d3d1;
 
-  /* Brand */
-  --primary: #111111;
-  --primary-hover: #262626;
+  /* Brand — softer coral accent */
+  --primary: #292524;
+  --primary-hover: #44403c;
   --primary-fg: #ffffff;
-  --accent: #ff5c39;
-  --accent-hover: #e94a29;
-  --accent-soft: #fff1ec;
-  --accent-border: #ffd9cc;
+  --accent: #e86b4a;
+  --accent-hover: #d45a3a;
+  --accent-soft: #fdf0eb;
+  --accent-border: #f5d5c8;
 
   /* Focus / interactive */
   --focus: #2f80ff;
@@ -1827,10 +1827,10 @@ a {
   align-items: center;
   gap: 10px;
   padding: 8px 10px 8px 12px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--border-2);
   border-radius: 999px;
-  background: var(--surface, #fff);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+  box-shadow: var(--shadow-1);
   font-size: 12px;
   line-height: 1.2;
   flex-shrink: 0;
@@ -2748,6 +2748,154 @@ a {
 .rx-connect-grid.three { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 960px) {
   .rx-connect-grid.three { grid-template-columns: 1fr; }
+}
+
+.rx-backend-panel {
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+
+/* Org workspace strip */
+.rx-org-strip {
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface) 50%, var(--surface-2) 100%);
+}
+.rx-org-strip-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  font-size: 12px;
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+.rx-org-strip-icon {
+  display: inline-flex;
+  color: var(--accent);
+  opacity: 0.9;
+}
+.rx-org-strip-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.rx-org-strip-sep {
+  color: var(--text-4);
+  user-select: none;
+}
+.rx-org-strip-id {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 11px;
+}
+.rx-org-strip-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+.rx-org-strip-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success);
+  font-weight: 500;
+}
+.rx-live-dot-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
+}
+
+/* SQL thread / registry badges */
+.rx-sql-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(120, 113, 108, 0.12);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+
+.rx-source-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rx-alert-soft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.rx-backend-panel.compact {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.rx-backend-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.rx-backend-title {
+  font-weight: 650;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.rx-backend-body {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.rx-backend-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.rx-backend-kv dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+.rx-backend-kv dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.rx-backend-api {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rx-badge.db {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .rx-channel-identity {
