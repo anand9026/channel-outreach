@@ -719,11 +719,13 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
     return state.messages
       .filter((m) => {
         if (m.conversationId !== conv.id) return false
+        // Unified timeline: one row per person — show WA + email together.
+        if (unified) return true
         if (scopedCampaignId === AD_HOC_CAMPAIGN_ID) return !m.campaignId
         return m.campaignId === scopedCampaignId || (!m.campaignId && scopedCampaignId === conv.lastCampaignId)
       })
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  }, [state.messages, conv.id, scopedCampaignId, conv.lastCampaignId])
+  }, [state.messages, conv.id, scopedCampaignId, conv.lastCampaignId, unified])
 
   const activeConv: Conversation = useMemo(() => {
     if (!unified) return conv

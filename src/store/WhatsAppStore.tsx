@@ -1667,6 +1667,7 @@ function reducer(state: AppState, action: Action): AppState {
         status: 'sent',
         isTemplate: false,
         createdAt: ts,
+        campaignId: conv.lastCampaignId || conv.campaignIds[0],
         metaMessageId:
           replyChannel === 'whatsapp'
             ? `wamid.${uid('meta')}`
@@ -3163,9 +3164,11 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
           const emailThreadId = sel.channelThreads?.email?.gmailThreadId || sel.gmailThreadId
           if (em?.userId && emailThreadId) {
             try {
+              // Ingest Gmail thread into outreach_messages before SQL list.
               await getGmailThread({
                 thread_id: emailThreadId,
                 user_id: em.userId,
+                org_id: orgId,
               })
             } catch {
               /* gmail ingest is best-effort */
@@ -3547,6 +3550,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
           thread_id:
             conv.channelThreads?.email?.gmailThreadId || conv.gmailThreadId,
           user_id: em.userId,
+          org_id: resolveOrgId(),
         })
         void doLiveSync()
         return true
