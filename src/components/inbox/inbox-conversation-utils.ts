@@ -1,4 +1,4 @@
-import type { Conversation, Influencer, OutreachChannel } from '../../types'
+import type { Conversation, Influencer, Message, OutreachChannel } from '../../types'
 
 /** Strip invisible Gmail / unicode junk from previews. */
 export function sanitizePreview(raw: string | undefined | null): string {
@@ -69,6 +69,50 @@ export function isCreatorConversation(c: Conversation, inf?: Influencer): boolea
   if (inf?.id && !inf.id.startsWith('ext_em_')) return true
   if (inf?.niche && inf.niche !== 'External') return true
   return false
+}
+
+/**
+ * Outreach-only — exclude cold Gmail inbox sync (notifications, security alerts, etc.).
+ * Keep threads where we sent outreach or tied to a creator / campaign.
+ */
+export function isOutreachConversation(
+  c: Conversation,
+  inf?: Influencer,
+  messages: Message[] = [],
+): boolean {
+  const channels = c.channels?.length ? c.channels : [c.channel]
+  const hasWhatsApp = channels.includes('whatsapp')
+  if (hasWhatsApp) return isCreatorConversation(c, inf)
+
+  const hasOutreachEmailThread = Boolean(
+    c.channelThreads?.email?.outreachCampaignId ||
+      c.campaignIds.length > 0 ||
+      c.lastCampaignId,
+  )
+  if (hasOutreachEmailThread) return true
+
+  const emailMessages = messages.filter((m) => m.channel === 'email')
+  if (emailMessages.some((m) => m.direction === 'outbound')) return true
+
+  if (isCreatorConversation(c, inf) && emailMessages.length > 0) return true
+
+  return false
+}
+
+const CHANNEL_ORDER: OutreachChannel[] = ['whatsapp', 'email', 'instagram']
+
+/** Channels on this conversation that have outreach activity (for tabs). */
+export function outreachChannelsForConversation(
+  c: Conversation,
+  messages: Message[] = [],
+): OutreachChannel[] {
+  const fromConv = c.channels?.length ? c.channels : [c.channel]
+  const withMessages = new Set<OutreachChannel>()
+  for (const ch of fromConv) withMessages.add(ch)
+  for (const m of messages) {
+    if (m.conversationId === c.id) withMessages.add(m.channel)
+  }
+  return CHANNEL_ORDER.filter((ch) => withMessages.has(ch))
 }
 
 export function formatConversationTime(iso: string): string {

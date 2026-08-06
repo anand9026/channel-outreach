@@ -4,37 +4,23 @@ import {
   BellOff,
   Bookmark,
   Check,
-  CheckCheck,
   CheckSquare,
-  ExternalLink,
-  FileText,
   Filter,
   Flame,
-  Heart,
   Inbox as InboxIcon,
   Mail,
   MessageCircle,
-  Paperclip,
-  Play,
   RefreshCcw,
   Search,
-  Send,
-  Smile,
   Tag,
   Wifi,
   WifiOff,
   X,
-  Zap,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CampaignInboxRow } from '../components/inbox/CampaignInboxRow'
-import { ChannelStripeTimeline } from '../components/inbox/ChannelStripeTimeline'
-import { UnifiedMessageTimeline } from '../components/inbox/UnifiedMessageTimeline'
+import { ConversationThread } from '../components/inbox/ConversationThread'
 import { InboxFilterDrawer } from '../components/inbox/InboxFilterDrawer'
-import { AiSuggestReply } from '../components/inbox/AiSuggestReply'
-import { EmailMessageBody } from '../components/inbox/EmailMessageBody'
-import { ReplyChannelSwitcher } from '../components/inbox/ReplyChannelSwitcher'
-import { ThreadHeaderMenu } from '../components/inbox/ThreadHeaderMenu'
 import {
   activeInboxFilterCount,
   conversationPassesInboxFilters,
@@ -44,20 +30,15 @@ import {
   inboxRowMatchesCampaignFilter,
 } from '../components/inbox/inbox-campaign-rows'
 import {
-  channelLabelShort,
-  contactLineForConversation,
-  displayNameForConversation,
-  initialsForName,
   isCreatorConversation,
+  isOutreachConversation,
 } from '../components/inbox/inbox-conversation-utils'
-import { EmojiPicker } from '../components/EmojiPicker'
 import { EmptyState } from '../components/EmptyState'
 import { IgIcon } from '../components/BrandIcons'
-import { whatsappMediaUrl, resolveOrgId } from '../lib/api'
+import { resolveOrgId } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import type { Conversation, Influencer, Message, OutreachChannel } from '../types'
 import { AD_HOC_CAMPAIGN_ID } from '../types'
-import { defaultEmailReplySubject } from '../lib/email-reply-subject'
 
 function formatSince(ts: string | null): string {
   if (!ts) return 'never'
@@ -70,17 +51,6 @@ function formatSince(ts: string | null): string {
   const h = Math.floor(m / 60)
   return `${h}h ago`
 }
-
-const SUGGESTED_LABELS = [
-  'hot lead',
-  'follow-up',
-  'contract sent',
-  'paid',
-  'ghosted',
-  'not interested',
-]
-
-const REACTION_QUICKPICK = ['\u2764\uFE0F', '\u{1F44D}', '\u{1F44E}', '\u{1F602}', '\u{1F62E}', '\u{1F525}']
 
 type SavedView =
   | 'creators'
@@ -107,6 +77,7 @@ function passesSavedView(
   messagesForConv: Message[],
   inf?: Influencer,
 ): boolean {
+  if (!isOutreachConversation(c, inf, messagesForConv)) return false
   switch (view) {
     case 'creators':
       return isCreatorConversation(c, inf)
@@ -273,7 +244,7 @@ export function InboxV2() {
           <div>
             <h1 className="rx-page-title">Inbox</h1>
             <p className="rx-page-sub">
-              One row per creator × campaign. Channels appear as stripes inside the thread.
+              Creator conversations from your outreach campaigns — WhatsApp and email, per channel.
             </p>
           </div>
           <div className="rx-row" style={{ gap: 8 }}>
@@ -495,7 +466,7 @@ export function InboxV2() {
                 title={savedView === 'creators' ? 'No creator conversations yet' : 'No conversations match'}
                 body={
                   savedView === 'creators'
-                    ? 'Send a campaign or Quick Send to start a thread. Switch to All mail to see synced Gmail.'
+                    ? 'Send a campaign to a creator to start a conversation here.'
                     : 'Try switching the saved view, campaign filter, or clearing search.'
                 }
               />
@@ -532,7 +503,7 @@ export function InboxV2() {
         </div>
 
         {selected && selectedRow ? (
-          <Thread scopedCampaignId={selectedRow.campaignId} />
+          <ConversationThread scopedCampaignId={selectedRow.campaignId} />
         ) : (
           <EmptyThread />
         )}
@@ -551,692 +522,6 @@ function EmptyThread() {
           title="Pick a conversation"
           body="Select a chat from the list to see the thread."
         />
-      </div>
-    </div>
-  )
-}
-
-function InboundMedia({ msg }: { msg: Message }) {
-  if (!msg.mediaId || !msg.mediaKind) return null
-  const url = whatsappMediaUrl(msg.mediaId)
-  if (msg.mediaKind === 'image' || msg.mediaKind === 'sticker') {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-media">
-        <img src={url} alt={msg.caption || 'image'} loading="lazy" />
-      </a>
-    )
-  }
-  if (msg.mediaKind === 'video') {
-    return <video src={url} controls className="rx-msg-media video" preload="metadata" />
-  }
-  if (msg.mediaKind === 'audio') {
-    return <audio src={url} controls className="rx-msg-audio" preload="metadata" />
-  }
-  if (msg.mediaKind === 'document') {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-doc">
-        <FileText size={14} /> Document ({msg.mediaMime || 'file'})
-        <ExternalLink size={12} />
-      </a>
-    )
-  }
-  return null
-}
-
-function MessageBubble({
-  msg,
-  channel,
-  showChannelChip,
-  compactEmail,
-  onReact,
-  onRemoveReaction,
-}: {
-  msg: Message
-  channel: OutreachChannel
-  showChannelChip?: boolean
-  compactEmail?: boolean
-  onReact: (msgId: string, emoji: string) => void
-  onRemoveReaction: (msgId: string) => void
-}) {
-  const [showReactMenu, setShowReactMenu] = useState(false)
-  const myReaction = (msg.reactions || []).find((r) => r.by === 'me')
-
-  return (
-    <div className={`rx-msg-row ${msg.direction === 'outbound' ? 'out' : 'in'}`}>
-      <div className="rx-msg-wrap">
-        {showChannelChip ? (
-          <div className={`rx-msg-channel-chip ${channel}`} aria-label={channelLabelShort(channel)}>
-            <span className="rx-msg-channel-dot" />
-            {channelLabelShort(channel)}
-          </div>
-        ) : null}
-        {msg.subject && channel !== 'email' ? (
-          <div className="rx-text-xs rx-muted rx-mb-2">
-            <strong>{msg.subject}</strong>
-          </div>
-        ) : null}
-        {msg.mediaId ? <InboundMedia msg={msg} /> : null}
-        {channel === 'email' ? (
-          <div className="rx-msg rx-msg-email" data-channel={channel}>
-            <EmailMessageBody
-              compact={compactEmail}
-              subject={msg.subject}
-              from={msg.emailFrom}
-              to={msg.emailTo}
-              body={msg.body}
-              htmlBody={msg.htmlBody}
-              rawBody={msg.rawBody}
-            />
-          </div>
-        ) : msg.body ? (
-          <div className="rx-msg" data-channel={channel}>{msg.body}</div>
-        ) : null}
-        <div className="rx-msg-meta">
-          <span>
-            {new Date(msg.createdAt).toLocaleTimeString('en', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
-          {msg.direction === 'outbound' ? (
-            <>
-              <span>·</span>
-              <span>{msg.status}</span>
-              {msg.status === 'read' ? (
-                <CheckCheck size={12} />
-              ) : msg.status === 'delivered' ? (
-                <Check size={12} />
-              ) : msg.status === 'failed' ? (
-                <AlertTriangle size={12} />
-              ) : null}
-            </>
-          ) : null}
-        </div>
-        {msg.reactions && msg.reactions.length > 0 && (
-          <div className="rx-msg-reactions">
-            {msg.reactions.map((r, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`rx-msg-reaction${r.by === 'me' ? ' mine' : ''}`}
-                onClick={() => r.by === 'me' && onRemoveReaction(msg.id)}
-                title={r.by === 'me' ? 'Remove your reaction' : 'Reaction from creator'}
-              >
-                {r.emoji}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="rx-msg-actions">
-          <button
-            type="button"
-            className="rx-msg-react-btn"
-            onClick={() => setShowReactMenu((v) => !v)}
-            title="React"
-            aria-label="React to message"
-          >
-            <Heart size={12} />
-          </button>
-          {showReactMenu && (
-            <div className="rx-react-menu" onMouseLeave={() => setShowReactMenu(false)}>
-              {REACTION_QUICKPICK.map((em) => (
-                <button
-                  key={em}
-                  type="button"
-                  className={`rx-react-menu-btn${myReaction?.emoji === em ? ' is-mine' : ''}`}
-                  onClick={() => {
-                    onReact(msg.id, em)
-                    setShowReactMenu(false)
-                  }}
-                >
-                  {em}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
-  const { state, actions } = useWhatsAppStore()
-  const conv = state.conversations.find((c) => c.id === state.selectedConversationId)!
-  const inf = state.influencers.find((i) => i.id === conv.influencerId)
-  const scopedCampaign = state.campaigns.find((c) => c.id === scopedCampaignId)
-  const campaignTitle =
-    scopedCampaignId === AD_HOC_CAMPAIGN_ID
-      ? 'Ad-hoc'
-      : scopedCampaign?.name || 'Campaign'
-
-  // Unified conversation — one row per person; channel threads live under channelThreads.
-  const siblings = useMemo(() => {
-    if (conv.outreachConversationId) return [conv]
-    return state.conversations.filter((c) => c.influencerId === conv.influencerId)
-  }, [state.conversations, conv])
-  const availableChannels = useMemo(() => {
-    if (conv.channels?.length) return conv.channels
-    const set = new Set<OutreachChannel>()
-    for (const s of siblings) set.add(s.channel)
-    return Array.from(set)
-  }, [conv.channels, siblings])
-  const canUnify = availableChannels.length >= 2
-
-  const [unified, setUnified] = useState(canUnify)
-  useEffect(() => {
-    if (canUnify) setUnified(true)
-    else if (!canUnify && unified) setUnified(false)
-  }, [canUnify, conv.id])
-
-  const [replyChannel, setReplyChannel] = useState<OutreachChannel>(
-    conv.channels?.includes('whatsapp') ? 'whatsapp' : conv.channel,
-  )
-
-  const waWindowOpen = actions.isWithin24hWindow(conv.id)
-  const hasEmailChannel = availableChannels.includes('email')
-
-  useEffect(() => {
-    if (conv.channels?.includes('whatsapp')) {
-      setReplyChannel('whatsapp')
-    } else {
-      setReplyChannel(conv.channel)
-    }
-  }, [conv.channel, conv.id, conv.channels])
-
-  // When WhatsApp 24h window is closed, default to Gmail if available.
-  useEffect(() => {
-    if (!canUnify || !hasEmailChannel) return
-    if (!waWindowOpen) setReplyChannel('email')
-  }, [conv.id, canUnify, hasEmailChannel, waWindowOpen])
-
-  const messages = useMemo(() => {
-    return state.messages
-      .filter((m) => {
-        if (m.conversationId !== conv.id) return false
-        // Unified timeline: one row per person — show WA + email together.
-        if (unified) return true
-        if (scopedCampaignId === AD_HOC_CAMPAIGN_ID) return !m.campaignId
-        return m.campaignId === scopedCampaignId || (!m.campaignId && scopedCampaignId === conv.lastCampaignId)
-      })
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  }, [state.messages, conv.id, scopedCampaignId, conv.lastCampaignId, unified])
-
-  const activeConv: Conversation = useMemo(() => {
-    const wa = conv.channelThreads?.whatsapp
-    const em = conv.channelThreads?.email
-    const base = {
-      ...conv,
-      phoneNumberId: wa?.phoneNumberId || conv.phoneNumberId,
-      emailAccountId: em?.emailAccountId || conv.emailAccountId,
-      gmailThreadId: em?.gmailThreadId || conv.gmailThreadId,
-    }
-    if (!canUnify) {
-      return {
-        ...base,
-        channel: replyChannel,
-        outreachThreadId:
-          replyChannel === 'whatsapp'
-            ? wa?.outreachThreadId || conv.outreachThreadId
-            : em?.outreachThreadId || conv.outreachThreadId,
-      }
-    }
-    return {
-      ...base,
-      channel: replyChannel,
-      outreachThreadId:
-        replyChannel === 'whatsapp'
-          ? wa?.outreachThreadId || conv.outreachThreadId
-          : em?.outreachThreadId || conv.outreachThreadId,
-    }
-  }, [canUnify, conv, replyChannel])
-
-  const [draft, setDraft] = useState('')
-  const [emailSubject, setEmailSubject] = useState('')
-  const [replying, setReplying] = useState(false)
-  const [showEmoji, setShowEmoji] = useState(false)
-  const [showCanned, setShowCanned] = useState(false)
-  const attachRef = useRef<HTMLInputElement | null>(null)
-
-  useEffect(() => {
-    if (replyChannel === 'email') {
-      setEmailSubject(defaultEmailReplySubject(messages))
-    }
-  }, [replyChannel, conv.id, messages])
-
-  const canReply =
-    replyChannel === 'email'
-      ? hasEmailChannel
-      : replyChannel === 'whatsapp'
-        ? waWindowOpen
-        : actions.canFreeformReply(activeConv.id)
-  const windowOpen = activeConv.channel === 'email' || waWindowOpen
-
-  const bodyRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const el = bodyRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [conv.id, unified, messages.length])
-
-  const send = async () => {
-    const text = draft.trim()
-    if (!text || replying) return
-    setDraft('')
-    setReplying(true)
-    try {
-      if (activeConv.channel === 'whatsapp' && activeConv.isLive) {
-        const ok = await actions.sendWhatsAppReplyLive(activeConv.id, text)
-        if (!ok) setDraft(text)
-      } else if (activeConv.channel === 'email' && activeConv.isLive) {
-        const ok = await actions.sendGmailReplyLive(activeConv.id, text, {
-          subject: emailSubject.trim(),
-        })
-        if (!ok) setDraft(text)
-      } else {
-        const ok = actions.sendReply(activeConv.id, text)
-        if (!ok) {
-          setDraft(text)
-          actions.toast(
-            activeConv.channel === 'email'
-              ? 'Could not send'
-              : 'Reply window closed — send a template first',
-            'error',
-          )
-        }
-      }
-    } finally {
-      setReplying(false)
-    }
-  }
-
-  const insertAtCaret = (s: string) => {
-    setDraft((prev) => prev + (prev.endsWith(' ') || prev === '' ? '' : ' ') + s)
-  }
-
-  const addLabel = (l: string) => {
-    const clean = l.trim().toLowerCase()
-    if (!clean) return
-    const cur = conv.labels || []
-    if (cur.includes(clean)) return
-    actions.setConversationLabels(conv.id, [...cur, clean])
-  }
-  const removeLabel = (l: string) => {
-    actions.setConversationLabels(conv.id, (conv.labels || []).filter((x) => x !== l))
-  }
-
-  const displayName = displayNameForConversation(conv, inf)
-  const initials = initialsForName(displayName)
-  const contactLine = contactLineForConversation(conv, inf)
-  const canReact = !activeConv.isLive || activeConv.channel !== 'whatsapp'
-
-  return (
-    <div className="rx-thread" data-channel={unified ? 'unified' : conv.channel}>
-      <div className="rx-thread-head">
-        <div className="rx-thread-head-left">
-          <div className={`rx-conv-avatar rx-thread-avatar${canUnify ? ' is-multi' : ''}`}>
-            {initials}
-          </div>
-          <div className="rx-thread-head-copy">
-            <div className="rx-thread-title-row">
-              <div className="rx-thread-title">{displayName}</div>
-              <span className="rx-thread-campaign-pill">{campaignTitle}</span>
-            </div>
-            <div className="rx-thread-subline">
-              <div className="rx-conv-channels rx-thread-channels">
-                {availableChannels.map((ch) => (
-                  <span key={ch} className={`rx-channel-pill ${ch}`}>
-                    {channelLabelShort(ch)}
-                  </span>
-                ))}
-              </div>
-              {contactLine ? (
-                <span className="rx-thread-contact-inline mono">{contactLine}</span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-        <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {canUnify && !conv.outreachConversationId ? (
-            <div className="rx-seg sm" role="tablist" aria-label="Thread view mode" data-testid="unified-toggle">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={!unified}
-                className={`rx-seg-btn${!unified ? ' is-active' : ''}`}
-                onClick={() => setUnified(false)}
-                data-testid="thread-mode-single"
-              >
-                Single
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={unified}
-                className={`rx-seg-btn${unified ? ' is-active' : ''}`}
-                onClick={() => setUnified(true)}
-                data-testid="thread-mode-unified"
-                title={`Merge ${availableChannels.map(channelLabelShort).join(' + ')}`}
-              >
-                Unified
-              </button>
-            </div>
-          ) : null}
-          <ThreadHeaderMenu
-            conversationId={conv.id}
-            intent={conv.intent}
-            labels={conv.labels || []}
-            suggestedLabels={SUGGESTED_LABELS}
-            onIntentChange={(intent) => actions.setConversationIntent(conv.id, intent)}
-            onAddLabel={addLabel}
-            onRemoveLabel={removeLabel}
-          />
-          {conv.status === 'resolved' ? (
-            <button className="rx-btn secondary sm" onClick={() => actions.reopenConversation(conv.id)}>
-              Reopen
-            </button>
-          ) : (
-            <button
-              className="rx-btn secondary sm"
-              onClick={() => actions.resolveConversation(conv.id)}
-              data-testid="resolve-conversation"
-            >
-              <Check size={12} /> Resolve
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="rx-thread-body" ref={bodyRef} data-channel={unified ? 'unified' : conv.channel}>
-        {messages.length === 0 ? (
-          <div style={{ margin: 'auto', color: 'var(--text-3)' }}>
-            {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
-          </div>
-        ) : unified ? (
-          <UnifiedMessageTimeline
-            messages={messages}
-            renderMessage={(m, msgChannel) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                channel={msgChannel}
-                showChannelChip={(conv.channels?.length || 0) > 1}
-                compactEmail
-                onReact={(id, em) => {
-                  if (!canReact) {
-                    actions.toast(
-                      'Reactions on live WhatsApp threads need proxy support — UI ready.',
-                      'info',
-                    )
-                    return
-                  }
-                  actions.reactToMessage(id, em, 'me')
-                }}
-                onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
-              />
-            )}
-          />
-        ) : (
-          <ChannelStripeTimeline
-            messages={messages}
-            showStripes={(conv.channels?.length || 0) > 1}
-            renderMessage={(m, msgChannel) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                channel={msgChannel}
-                showChannelChip={(conv.channels?.length || 0) > 1}
-                onReact={(id, em) => {
-                  if (!canReact) {
-                    actions.toast(
-                      'Reactions on live WhatsApp threads need proxy support — UI ready.',
-                      'info',
-                    )
-                    return
-                  }
-                  actions.reactToMessage(id, em, 'me')
-                }}
-                onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
-              />
-            )}
-          />
-        )}
-      </div>
-
-      <div className="rx-composer" data-channel={activeConv.channel}>
-        <AiSuggestReply
-          messages={messages}
-          creatorName={displayName}
-          onInsert={insertAtCaret}
-        />
-        {canUnify && (
-          <div className="rx-composer-channel-row">
-            <ReplyChannelSwitcher
-              channels={availableChannels}
-              value={replyChannel}
-              onChange={setReplyChannel}
-              disabled={replying}
-              whatsappWindowOpen={waWindowOpen}
-            />
-          </div>
-        )}
-        {activeConv.channel === 'whatsapp' && (
-          <div className={`rx-window-note ${windowOpen ? 'open' : 'closed'}`}>
-            <span>
-              {windowOpen
-                ? activeConv.isLive
-                  ? '24-hour WhatsApp window open'
-                  : '24-hour WhatsApp window open'
-                : hasEmailChannel
-                  ? 'WhatsApp window closed — reply on Gmail instead'
-                  : 'WhatsApp window closed — use a template'}
-            </span>
-          </div>
-        )}
-        {activeConv.channel === 'email' && (
-          <div className={`rx-window-note open`}>
-            <span>
-              {activeConv.isLive
-                ? '● Live Gmail thread · replies send from your connected account'
-                : '● Email thread'}
-            </span>
-          </div>
-        )}
-        {activeConv.channel === 'instagram' && (
-          <div className={`rx-window-note ig ${windowOpen ? 'open' : 'closed'}`}>
-            <span>
-              {windowOpen
-                ? '● Instagram 24-hour DM window open'
-                : '● DM window closed — send a story reply or template'}
-            </span>
-          </div>
-        )}
-        {activeConv.channel === 'email' && (
-          <div className="rx-composer-email-subject" data-testid="composer-email-subject">
-            <label className="rx-composer-email-subject-label" htmlFor="email-subject-input">
-              Subject
-            </label>
-            <input
-              id="email-subject-input"
-              className="rx-input"
-              value={emailSubject}
-              onChange={(e) => setEmailSubject(e.target.value)}
-              disabled={!canReply || replying}
-              placeholder="Re: …"
-            />
-          </div>
-        )}
-        <div className="rx-composer-row">
-          <div className="rx-composer-tools">
-            <button
-              type="button"
-              className="rx-icon-btn"
-              onClick={() => setShowEmoji((v) => !v)}
-              disabled={!canReply}
-              title="Emoji"
-              data-testid="composer-emoji"
-            >
-              <Smile size={15} />
-            </button>
-            <button
-              type="button"
-              className="rx-icon-btn"
-              onClick={() => setShowCanned((v) => !v)}
-              disabled={!canReply || state.cannedReplies.length === 0}
-              title="Canned replies"
-              data-testid="composer-canned"
-            >
-              <Zap size={15} />
-            </button>
-            <button
-              type="button"
-              className="rx-icon-btn"
-              onClick={() => attachRef.current?.click()}
-              disabled={!canReply}
-              title={
-                activeConv.channel === 'whatsapp' && activeConv.isLive
-                  ? 'Media send is pending backend support — coming soon'
-                  : 'Attach a file'
-              }
-              data-testid="composer-attach"
-            >
-              <Paperclip size={15} />
-            </button>
-            <input
-              ref={attachRef}
-              type="file"
-              accept="image/*,video/*,application/pdf"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (!file) return
-                if (activeConv.channel === 'whatsapp' && activeConv.isLive) {
-                  actions.toast(
-                    'WhatsApp media send requires proxy support — UI ready, endpoint pending',
-                    'info',
-                  )
-                } else {
-                  const url = URL.createObjectURL(file)
-                  actions.toast(`Attached ${file.name} (mock preview)`, 'info')
-                  window.open(url, '_blank', 'noopener')
-                }
-                if (attachRef.current) attachRef.current.value = ''
-              }}
-            />
-            {showEmoji && (
-              <EmojiPicker
-                onPick={(em) => setDraft((d) => d + em)}
-                onClose={() => setShowEmoji(false)}
-              />
-            )}
-            {showCanned && (
-              <div className="rx-canned-pop" data-testid="canned-pop">
-                <div className="rx-canned-head">
-                  <span className="rx-text-xs rx-muted">Quick replies</span>
-                </div>
-                <div className="rx-canned-list">
-                  {state.cannedReplies.length === 0 ? (
-                    <div className="rx-text-xs rx-muted" style={{ padding: 8 }}>
-                      Add canned replies in Settings.
-                    </div>
-                  ) : (
-                    state.cannedReplies.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="rx-canned-item"
-                        onClick={() => {
-                          insertAtCaret(c.body)
-                          setShowCanned(false)
-                        }}
-                      >
-                        <div className="rx-canned-title">
-                          <Play size={10} /> {c.title}
-                        </div>
-                        <div className="rx-canned-preview">{c.body}</div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          <textarea
-            className="rx-textarea"
-            placeholder={
-              canReply
-                ? `Message on ${channelLabelShort(activeConv.channel)}…`
-                : activeConv.channel === 'whatsapp' && hasEmailChannel
-                  ? 'Switch to Gmail to reply'
-                  : activeConv.channel === 'whatsapp'
-                    ? '24h window closed — use a template'
-                    : 'Reply unavailable'
-            }
-            rows={1}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            disabled={!canReply || replying}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                send()
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="rx-btn primary"
-            onClick={send}
-            disabled={!canReply || !draft.trim() || replying}
-            data-testid="composer-send"
-          >
-            <Send size={14} /> {replying ? 'Sending…' : 'Send'}
-          </button>
-        </div>
-        {!activeConv.isLive ? (
-          <div className="rx-row" style={{ gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-            <span className="rx-text-xs rx-muted">Demo:</span>
-            <button
-              type="button"
-              className="rx-btn ghost sm"
-              onClick={() =>
-                actions.simulateInbound(
-                  activeConv.id,
-                  'Sure! Could you share your rates and the brief?',
-                )
-              }
-              data-testid="sim-hot"
-            >
-              Sim hot lead
-            </button>
-            <button
-              type="button"
-              className="rx-btn ghost sm"
-              onClick={() =>
-                actions.simulateInbound(
-                  activeConv.id,
-                  'Just processed the invoice \u2014 payment received!',
-                )
-              }
-              data-testid="sim-paid"
-            >
-              Sim paid
-            </button>
-            <button
-              type="button"
-              className="rx-btn ghost sm"
-              onClick={() =>
-                actions.simulateInbound(
-                  activeConv.id,
-                  'Yes, sounds great! Would love to know more.',
-                )
-              }
-              data-testid="sim-neutral"
-            >
-              Sim neutral
-            </button>
-          </div>
-        ) : null}
       </div>
     </div>
   )
