@@ -27,6 +27,7 @@ type Row = {
   variables: string[]
   status: string
   updatedAt: string
+  version: number
 }
 
 function mapRegistryMedium(medium: string): 'whatsapp' | 'email' | 'instagram' {
@@ -63,6 +64,7 @@ function registryRow(t: OutreachTemplateRow): Row {
       formatOutreachTimestamp(t.date_modified) ||
       formatOutreachTimestamp(t.date_added) ||
       '',
+    version: 1,
   }
 }
 
@@ -76,8 +78,10 @@ function extractMetaBody(t: MetaTemplate): { body: string; variables: string[] }
 }
 
 export function TemplatesLib() {
-  const { state } = useWhatsAppStore()
+  const { state, actions } = useWhatsAppStore()
   const [tab, setTab] = useState<'all' | 'whatsapp' | 'email'>('all')
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [previewRow, setPreviewRow] = useState<Row | null>(null)
   const [sourceTab, setSourceTab] = useState<'all' | 'registry' | 'meta' | 'gmail' | 'local'>('all')
   const [search, setSearch] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -157,6 +161,7 @@ export function TemplatesLib() {
       variables: t.variables,
       status: t.status,
       updatedAt: t.updatedAt,
+      version: 1,
     }))
 
     const localNames = new Set(
@@ -179,6 +184,7 @@ export function TemplatesLib() {
           variables,
           status: t.status,
           updatedAt: '',
+          version: 1,
         }
       })
 
@@ -197,6 +203,7 @@ export function TemplatesLib() {
         variables: [],
         status: 'ACTIVE',
         updatedAt: t.updated_at || '',
+        version: 1,
       }
     })
 
@@ -211,14 +218,22 @@ export function TemplatesLib() {
           : r.name.toLowerCase().includes(search.toLowerCase()) ||
             r.body.toLowerCase().includes(search.toLowerCase()),
       )
+      .filter((r) => (categoryFilter ? r.category === categoryFilter : true))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [state.templates, metaTemplates, gmailTemplates, registryTemplates, tab, sourceTab, search])
+  }, [state.templates, metaTemplates, gmailTemplates, registryTemplates, tab, sourceTab, search, categoryFilter])
+
+  const categories = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of state.templates) s.add(t.category)
+    for (const r of registryTemplates) if (r.category) s.add(r.category)
+    return [...s].sort()
+  }, [state.templates, registryTemplates])
 
   return (
     <div className="rx-page">
       <PageHeader
-        title="Messages"
-        subtitle="Your library of WhatsApp templates and email scripts. Reusable, personalizable, approvable."
+        title="Templates"
+        subtitle="Versioned library across WhatsApp and email — preview, duplicate, and reuse in campaigns."
         actions={
           <>
             <button
@@ -315,6 +330,28 @@ export function TemplatesLib() {
         </div>
       </div>
 
+      {categories.length > 0 ? (
+        <div className="rx-label-filter rx-mb-4">
+          <button
+            type="button"
+            className={`rx-chip${!categoryFilter ? ' is-active' : ''}`}
+            onClick={() => setCategoryFilter(null)}
+          >
+            All categories
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={`rx-chip${categoryFilter === c ? ' is-active' : ''}`}
+              onClick={() => setCategoryFilter(c === categoryFilter ? null : c)}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="rx-source-tabs rx-mb-4" data-testid="template-source-tabs">
         {(
           [
@@ -357,7 +394,9 @@ export function TemplatesLib() {
                 <th>Category</th>
                 <th>Variables</th>
                 <th>Status</th>
+                <th>Version</th>
                 <th>Source</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -386,6 +425,9 @@ export function TemplatesLib() {
                     <span className={`rx-badge ${statusClass(t.status)}`}>{t.status}</span>
                   </td>
                   <td>
+                    <span className="rx-version-chip">v{t.version}</span>
+                  </td>
+                  <td>
                     {t.source === 'registry' ? (
                       <span className="rx-sql-tag mono" title={`org ${resolveOrgId()}`}>SQL</span>
                     ) : t.source === 'meta' ? (
@@ -396,12 +438,59 @@ export function TemplatesLib() {
                       <span className="rx-text-xs rx-muted">local</span>
                     )}
                   </td>
+                  <td>
+                    <div className="rx-row" style={{ gap: 6 }}>
+                      <button
+                        type="button"
+                        className="rx-btn ghost sm"
+                        onClick={() => setPreviewRow(t)}
+                      >
+                        Preview
+                      </button>
+                      {t.source === 'local' ? (
+                        <button
+                          type="button"
+                          className="rx-btn ghost sm"
+                          onClick={() => {
+                            const src = state.templates.find((x) => t.key === `local:${x.id}`)
+                            if (!src) return
+                            actions.submitTemplate({
+                              channel: src.channel,
+                              name: `${src.name} (copy)`,
+                              category: src.category,
+                              subject: src.subject,
+                              body: src.body,
+                              bindings: src.bindings,
+                              brandId: src.brandId,
+                            })
+                            actions.toast('Template duplicated as draft', 'success')
+                          }}
+                        >
+                          Duplicate
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {previewRow ? (
+        <div className="rx-modal-backdrop" onClick={() => setPreviewRow(null)}>
+          <div className="rx-modal rx-template-preview" onClick={(e) => e.stopPropagation()}>
+            <div className="rx-modal-head">
+              <h2>{previewRow.name}</h2>
+              <button type="button" className="rx-btn ghost sm" onClick={() => setPreviewRow(null)}>
+                Close
+              </button>
+            </div>
+            <div className={`rx-tpl-preview-body ${previewRow.channel}`}>{previewRow.body}</div>
+          </div>
+        </div>
+      ) : null}
 
       <CreateTemplateModal
         open={createOpen}

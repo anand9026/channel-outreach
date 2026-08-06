@@ -1,11 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
 import { Sparkline } from '../components/Sparkline'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
+type ReportTab = 'overview' | 'campaigns' | 'channels' | 'creators'
+
 export function ResultsV2() {
-  const { state } = useWhatsAppStore()
+  const { state, actions } = useWhatsAppStore()
+  const [tab, setTab] = useState<ReportTab>('overview')
 
   const totals = useMemo(() => {
     return state.analytics.reduce(
@@ -60,14 +63,63 @@ export function ResultsV2() {
   const engagement = totals.sent > 0 ? Math.round((totals.replies / totals.sent) * 100) : 0
   const delivery = totals.sent > 0 ? Math.round((totals.delivered / totals.sent) * 100) : 0
 
+  const creatorStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { id: string; name: string; campaigns: Set<string>; replies: number; sent: number }
+    >()
+    for (const m of state.messages) {
+      const conv = state.conversations.find((c) => c.id === m.conversationId)
+      if (!conv) continue
+      const inf = state.influencers.find((i) => i.id === conv.influencerId)
+      const id = conv.influencerId
+      const cur = map.get(id) || {
+        id,
+        name: inf?.name || 'Unknown',
+        campaigns: new Set<string>(),
+        replies: 0,
+        sent: 0,
+      }
+      if (m.campaignId) cur.campaigns.add(m.campaignId)
+      if (m.direction === 'outbound') cur.sent += 1
+      if (m.direction === 'inbound') cur.replies += 1
+      map.set(id, cur)
+    }
+    return [...map.values()].sort((a, b) => b.replies - a.replies)
+  }, [state.messages, state.conversations, state.influencers])
+
   return (
     <div className="rx-page">
       <PageHeader
-        title="Results"
-        subtitle="Delivery, reads, and replies across all your outreach — by channel and by campaign."
+        title="Reports"
+        subtitle="Delivery, reads, and replies across campaigns — filterable by channel and campaign."
       />
 
-      {/* Top-line metrics WITH sparklines */}
+      <div className="rx-detail-tabs rx-mb-4" role="tablist">
+        {(
+          [
+            ['overview', 'Overview'],
+            ['campaigns', 'Campaigns'],
+            ['channels', 'Channels'],
+            ['creators', 'Creators'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={`rx-detail-tab${tab === id ? ' is-active' : ''}`}
+            onClick={() => setTab(id)}
+            data-testid={`report-tab-${id}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'overview' ? (
+        <>
       <div className="rx-metrics-grid rx-mb-6">
         <MetricCard label="Sent" value={totals.sent} spark={trends.sent} />
         <MetricCard label="Delivered" value={totals.delivered} sub={`${delivery}%`} spark={trends.delivered} />
@@ -101,8 +153,11 @@ export function ResultsV2() {
           <ChannelSummary sent={totals.emailSent} replied={totals.emailReplied} />
         </div>
       </div>
+        </>
+      ) : null}
 
-      {/* Per-campaign table */}
+      {tab === 'campaigns' ? (
+      <>
       <div className="rx-mb-4">
         <div className="rx-section-title">Campaign performance</div>
       </div>
@@ -133,7 +188,17 @@ export function ResultsV2() {
                 return (
                   <tr key={c.id}>
                     <td>
-                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{c.name}</div>
+                      <button
+                        type="button"
+                        className="rx-link-btn"
+                        onClick={() => {
+                          actions.selectCampaign(c.id)
+                          actions.setDetailCampaign(c.id)
+                          actions.setTab('campaigns')
+                        }}
+                      >
+                        {c.name}
+                      </button>
                       <div className="rx-text-xs rx-muted">{c.status}</div>
                     </td>
                     <td className="mono">{a?.whatsapp.sent || 0}</td>
@@ -156,6 +221,73 @@ export function ResultsV2() {
           </table>
         </div>
       )}
+      </>
+      ) : null}
+
+      {tab === 'channels' ? (
+        <div className="rx-split">
+          <div className="rx-card">
+            <div className="rx-section-title">
+              <span className="rx-ch-inline">
+                <span className="rx-ch-dot wa" /> WhatsApp
+              </span>
+            </div>
+            <ChannelSummary sent={totals.waSent} replied={totals.waReplied} />
+          </div>
+          <div className="rx-card">
+            <div className="rx-section-title">
+              <span className="rx-ch-inline">
+                <span className="rx-ch-dot email" /> Email
+              </span>
+            </div>
+            <ChannelSummary sent={totals.emailSent} replied={totals.emailReplied} />
+          </div>
+          <div className="rx-card">
+            <div className="rx-section-title">
+              <span className="rx-ch-inline">
+                <span className="rx-ch-dot ig" /> Instagram
+              </span>
+            </div>
+            <ChannelSummary sent={0} replied={0} />
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'creators' ? (
+        <div className="rx-card flush">
+          {creatorStats.length === 0 ? (
+            <div style={{ padding: 24 }}>
+              <EmptyState title="No creator activity" body="Send campaigns to populate creator reports." />
+            </div>
+          ) : (
+            <table className="rx-table">
+              <thead>
+                <tr>
+                  <th>Creator</th>
+                  <th>Campaigns</th>
+                  <th>Sent</th>
+                  <th>Replies</th>
+                  <th>Engagement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creatorStats.map((cr) => {
+                  const eng = cr.sent > 0 ? Math.round((cr.replies / cr.sent) * 100) : 0
+                  return (
+                    <tr key={cr.id}>
+                      <td>{cr.name}</td>
+                      <td className="mono">{cr.campaigns.size}</td>
+                      <td className="mono">{cr.sent}</td>
+                      <td className="mono">{cr.replies}</td>
+                      <td className="mono">{eng}%</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

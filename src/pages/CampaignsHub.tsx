@@ -2,6 +2,7 @@ import { Send, Sparkles, TrendingUp } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
+import { CampaignKanban } from '../components/campaigns/CampaignKanban'
 import { SendDrawer } from '../components/SendDrawer'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { CampaignDetail } from './CampaignDetail'
@@ -10,15 +11,29 @@ export function CampaignsHub() {
   const { state, actions } = useWhatsAppStore()
   const mode = connectionMode(state)
   const [sendOpen, setSendOpen] = useState(false)
-  const [detailId, setDetailId] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(state.detailCampaignId)
   const [filter, setFilter] = useState<'all' | 'active' | 'draft'>('all')
 
-  // Listen for command palette "New outreach"
   useEffect(() => {
     const open = () => setSendOpen(true)
     window.addEventListener('rx-open-send-drawer', open)
     return () => window.removeEventListener('rx-open-send-drawer', open)
   }, [])
+
+  useEffect(() => {
+    if (state.detailCampaignId) setDetailId(state.detailCampaignId)
+  }, [state.detailCampaignId])
+
+  const openDetail = (id: string) => {
+    actions.selectCampaign(id)
+    setDetailId(id)
+    actions.setDetailCampaign(id)
+  }
+
+  const closeDetail = () => {
+    setDetailId(null)
+    actions.setDetailCampaign(null)
+  }
 
   const campaigns = useMemo(() => {
     const list = state.campaigns.filter((c) =>
@@ -55,7 +70,7 @@ export function CampaignsHub() {
   }, [state.analytics, state.campaigns])
 
   if (detailId) {
-    return <CampaignDetail campaignId={detailId} onBack={() => setDetailId(null)} />
+    return <CampaignDetail campaignId={detailId} onBack={closeDetail} />
   }
 
   const emptyReady = mode !== 'none' && state.campaigns.length === 0
@@ -65,7 +80,7 @@ export function CampaignsHub() {
     <div className="rx-page">
       <PageHeader
         title="Campaigns"
-        subtitle="Everything you're sending, in one place. Start a new outreach or check on one in flight."
+        subtitle="Campaign-first outreach — draft, schedule, launch, and track every send."
         actions={
           <button
             type="button"
@@ -74,7 +89,7 @@ export function CampaignsHub() {
             data-testid="new-outreach"
           >
             <Send size={15} />
-            New outreach
+            New campaign
           </button>
         }
       />
@@ -107,7 +122,7 @@ export function CampaignsHub() {
                 <button
                   type="button"
                   className="rx-btn accent"
-                  onClick={() => actions.setTab('connect')}
+                  onClick={() => actions.setTab('campaigns')}
                   data-testid="goto-connect"
                 >
                   Connect channels
@@ -190,79 +205,14 @@ export function CampaignsHub() {
           body="Try another filter, or start a new one."
         />
       ) : (
-        <div className="rx-campaigns-list">
-          {campaigns.map((c) => {
-            const analytics = state.analytics.find((a) => a.campaignId === c.id)
-            const dbSent = c.source === 'db' ? (c.sentCount ?? 0) : null
-            const sent =
-              dbSent !== null
-                ? dbSent
-                : (analytics?.whatsapp.sent || 0) + (analytics?.email.sent || 0)
-            const replies = (analytics?.whatsapp.replied || 0) + (analytics?.email.replied || 0)
-            const engagement = sent > 0 ? Math.round((replies / sent) * 100) : 0
-            const channels = state.channels.filter((ch) => ch.campaignId === c.id)
-            const hasWa = channels.some((ch) => ch.channel === 'whatsapp')
-            const hasEmail = channels.some((ch) => ch.channel === 'email')
-            const brand = state.brands.find((b) => b.id === c.brandId)
-            return (
-              <button
-                key={c.id}
-                type="button"
-                className="rx-camp-row"
-                onClick={() => {
-                  actions.selectCampaign(c.id)
-                  setDetailId(c.id)
-                }}
-                data-testid={`campaign-${c.id}`}
-              >
-                <div className="rx-camp-name">
-                  <div className="rx-camp-title">{c.name}</div>
-                  <div className="rx-camp-meta">
-                    {brand?.name || 'Org-level'} ·{' '}
-                    <span className={`rx-badge ${c.status === 'active' ? 'dark' : ''}`}>
-                      {c.status}
-                    </span>
-                    {c.source === 'db' ? (
-                      <>
-                        {' '}
-                        · <span className="rx-badge db">SQL</span>
-                      </>
-                    ) : null}{' '}
-                    · {c.influencerIds.length || c.recipientCount || 0} creators
-                  </div>
-                </div>
-                <div className="rx-camp-channels">
-                  {hasWa && <span className="rx-badge wa">WhatsApp</span>}
-                  {hasEmail && <span className="rx-badge email">Email</span>}
-                  {!hasWa && !hasEmail && <span className="rx-badge">Not sent</span>}
-                </div>
-                <div className="rx-camp-metric">
-                  <div className="rx-camp-metric-label">Sent</div>
-                  <div className="rx-camp-metric-value">{sent}</div>
-                </div>
-                <div className="rx-camp-metric">
-                  <div className="rx-camp-metric-label">Replies</div>
-                  <div className="rx-camp-metric-value">{replies}</div>
-                </div>
-                <div className="rx-camp-metric">
-                  <div className="rx-camp-metric-label">Failed</div>
-                  <div className="rx-camp-metric-value">
-                    {c.source === 'db' ? (c.failedCount ?? 0) : '—'}
-                  </div>
-                </div>
-                <div className="rx-camp-metric" style={{ minWidth: 100 }}>
-                  <div className="rx-camp-metric-label">Engagement</div>
-                  <div className="rx-progress" style={{ marginTop: 4 }}>
-                    <span style={{ width: `${Math.min(100, engagement)}%` }} />
-                  </div>
-                  <div className="rx-text-xs rx-muted mono" style={{ marginTop: 2 }}>
-                    {engagement}%
-                  </div>
-                </div>
-              </button>
-            )
-          })}
-        </div>
+        <CampaignKanban
+          campaigns={campaigns}
+          channels={state.channels}
+          analytics={state.analytics}
+          conversations={state.conversations}
+          brands={state.brands}
+          onOpenCampaign={openDetail}
+        />
       )}
 
       <SendDrawer open={sendOpen} onClose={() => setSendOpen(false)} />

@@ -1,95 +1,69 @@
-import { BarChart3, ChevronsLeft, ChevronsRight, Home, Inbox, LayoutTemplate, Send, Settings, UserPlus, Zap } from 'lucide-react'
+import { BarChart3, ChevronsLeft, ChevronsRight, Home, Megaphone, Settings, Users } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import type { TabId } from '../types'
+import { normalizeTab } from '../types'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { ToastStack } from './Toast'
 import { SettingsDrawer } from './SettingsDrawer'
 import { OnboardingSheet } from './OnboardingSheet'
 import { OrgWorkspaceBanner } from './OrgWorkspaceBanner'
+import { OutreachSubNav } from './outreach/OutreachSubNav'
 
-const primaryNav: {
-  id: Exclude<TabId, 'connect' | 'floor'>
-  label: string
-  icon: typeof Send
-}[] = [
-  { id: 'home', label: 'Home', icon: Home },
-  { id: 'campaigns', label: 'Campaigns', icon: Send },
-  { id: 'quicksend', label: 'Quick Send', icon: Zap },
-  { id: 'inbox', label: 'Inbox', icon: Inbox },
-  { id: 'templates', label: 'Messages', icon: LayoutTemplate },
-  { id: 'analytics', label: 'Results', icon: BarChart3 },
-]
+/** Platform modules — Outreach is the active module in this app. */
+const platformModules = [
+  { id: 'platform-home', label: 'Home', icon: Home, disabled: true },
+  { id: 'platform-creators', label: 'Creators', icon: Users, disabled: true },
+  { id: 'outreach', label: 'Outreach', icon: Megaphone, disabled: false },
+  { id: 'platform-analytics', label: 'Analytics', icon: BarChart3, disabled: true },
+] as const
 
 export function Layout({ children }: { children: ReactNode }) {
   const { state, actions } = useWhatsAppStore()
   const mode = connectionMode(state)
-  const openCount = state.conversations.filter((c) => c.status !== 'resolved' && c.unreadCount > 0)
-    .length
-  const pendingTemplates = state.templates.filter((t) => t.status === 'PENDING').length
   const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // Redirect legacy 'floor' tab values to 'home' as the default landing
   useEffect(() => {
     if (state.activeTab === 'floor') {
-      actions.setTab('home')
+      actions.setTab('overview')
     }
   }, [state.activeTab, actions])
 
   const showOnboarding = mode === 'none'
-  const activeTab = state.activeTab === 'floor' ? 'home' : state.activeTab
   const emailConnected = state.emailAccounts.length > 0
+  const activeTab = normalizeTab(state.activeTab)
 
   return (
-    <div className="rx-shell">
+    <div className="rx-shell rx-shell-platform">
       <aside
-        className={`rx-sidebar${state.prefs.sidebarCollapsed ? ' is-collapsed' : ''}`}
-        data-testid="rx-sidebar"
+        className={`rx-platform-rail${state.prefs.sidebarCollapsed ? ' is-collapsed' : ''}`}
+        data-testid="rx-platform-rail"
       >
         <div className="rx-brand">
           <div className="rx-brand-mark">R</div>
           {!state.prefs.sidebarCollapsed && (
             <div>
-              <div className="rx-brand-name">Reelax Outreach</div>
+              <div className="rx-brand-name">Reelax</div>
               <div className="rx-brand-org">{state.organization.name}</div>
             </div>
           )}
         </div>
 
-        <nav className="rx-nav" aria-label="Primary">
-          {primaryNav.map(({ id, label, icon: Icon }) => {
-            const isActive = activeTab === id
-            let badge: number | undefined
-            if (id === 'inbox') badge = openCount || undefined
-            if (id === 'templates') badge = pendingTemplates || undefined
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`rx-nav-item${isActive ? ' is-active' : ''}`}
-                onClick={() => actions.setTab(id)}
-                data-testid={`nav-${id}`}
-                title={state.prefs.sidebarCollapsed ? label : undefined}
-              >
-                <Icon size={17} strokeWidth={1.8} />
-                {!state.prefs.sidebarCollapsed && <span>{label}</span>}
-                {badge ? <span className="rx-nav-badge">{badge}</span> : null}
-              </button>
-            )
-          })}
+        <nav className="rx-platform-nav" aria-label="Platform">
+          {platformModules.map(({ id, label, icon: Icon, disabled }) => (
+            <button
+              key={id}
+              type="button"
+              className={`rx-platform-nav-item${id === 'outreach' ? ' is-active' : ''}${disabled ? ' is-disabled' : ''}`}
+              disabled={disabled}
+              title={disabled ? `${label} (platform)` : label}
+              data-testid={`platform-${id}`}
+            >
+              <Icon size={17} strokeWidth={1.8} />
+              {!state.prefs.sidebarCollapsed && <span>{label}</span>}
+            </button>
+          ))}
         </nav>
 
         <div className="rx-sidebar-footer">
-          {!state.prefs.sidebarCollapsed && (
-            <button
-              type="button"
-              className="rx-settings-btn"
-              onClick={() => actions.setTab('connect')}
-              data-testid="open-connect"
-            >
-              <UserPlus size={16} />
-              <span>Connect channels</span>
-            </button>
-          )}
           {!state.prefs.sidebarCollapsed && (
             <>
               <div className="rx-conn-status">
@@ -97,36 +71,27 @@ export function Layout({ children }: { children: ReactNode }) {
                   className={`rx-dot${state.whatsAppNumbers.length ? ' is-live-wa' : ''}`}
                   aria-hidden
                 />
-                WhatsApp {state.whatsAppNumbers.length ? 'live' : 'not connected'}
+                WhatsApp {state.whatsAppNumbers.length ? 'live' : 'off'}
               </div>
-          <div className="rx-conn-status">
-            <span
-              className={`rx-dot${state.instagramAccounts.length ? ' is-live-ig' : ''}`}
-              aria-hidden
-            />
-            Instagram {state.instagramAccounts.length ? 'live' : 'not connected'}
-          </div>
-          <div className="rx-conn-status" title={state.emailAccounts[0]?.fromEmail}>
-            <span
-              className={`rx-dot${emailConnected ? ' is-live-email' : ''}`}
-              aria-hidden
-            />
-            {emailConnected ? (
-              <span className="rx-conn-email mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140, display: 'inline-block', verticalAlign: 'middle' }}>
-                {state.emailAccounts[0]?.fromEmail || 'Email live'}
-              </span>
-            ) : (
-              'Email not connected'
-            )}
-          </div>
-          </>
+              <div className="rx-conn-status">
+                <span
+                  className={`rx-dot${state.instagramAccounts.length ? ' is-live-ig' : ''}`}
+                  aria-hidden
+                />
+                Instagram {state.instagramAccounts.length ? 'live' : 'off'}
+              </div>
+              <div className="rx-conn-status" title={state.emailAccounts[0]?.fromEmail}>
+                <span className={`rx-dot${emailConnected ? ' is-live-email' : ''}`} aria-hidden />
+                {emailConnected ? 'Gmail live' : 'Gmail off'}
+              </div>
+            </>
           )}
           <button
             type="button"
             className="rx-settings-btn"
             onClick={() => setSettingsOpen(true)}
             data-testid="open-settings"
-            title={state.prefs.sidebarCollapsed ? 'Settings' : undefined}
+            title="Settings"
           >
             <Settings size={16} />
             {!state.prefs.sidebarCollapsed && <span>Settings</span>}
@@ -136,7 +101,6 @@ export function Layout({ children }: { children: ReactNode }) {
             className="rx-settings-btn rx-sidebar-collapse-btn"
             onClick={() => actions.setSidebarCollapsed(!state.prefs.sidebarCollapsed)}
             data-testid="toggle-sidebar"
-            title={state.prefs.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={state.prefs.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {state.prefs.sidebarCollapsed ? (
@@ -151,9 +115,12 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <div className="rx-main">
+      <div className="rx-main rx-main-module">
+        <OutreachSubNav />
         <OrgWorkspaceBanner />
-        <main>{children}</main>
+        <main className="rx-module-content" data-active-tab={activeTab}>
+          {children}
+        </main>
       </div>
 
       <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />

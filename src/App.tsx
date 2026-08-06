@@ -10,27 +10,27 @@ import { QuickSendPage } from './pages/QuickSendPage'
 import { ResultsV2 } from './pages/ResultsV2'
 import { TemplatesLib } from './pages/TemplatesLib'
 import { WhatsAppStoreProvider, useWhatsAppStore } from './store/WhatsAppStore'
+import { normalizeTab } from './types'
 
 function Router() {
   const { state } = useWhatsAppStore()
-  switch (state.activeTab) {
-    case 'home':
+  switch (normalizeTab(state.activeTab)) {
+    case 'overview':
       return <HomePage />
     case 'inbox':
       return <InboxV2 />
     case 'templates':
       return <TemplatesLib />
-    case 'analytics':
+    case 'reports':
       return <ResultsV2 />
-    case 'quicksend':
-      return <QuickSendPage />
-    case 'connect':
+    case 'channels':
       return <ConnectPage />
     case 'campaigns':
       return <CampaignsHub />
-    case 'floor':
+    case 'quicksend':
+      return <QuickSendPage />
     default:
-      return <HomePage />
+      return <CampaignsHub />
   }
 }
 

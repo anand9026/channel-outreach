@@ -183,7 +183,7 @@ export function HomePage() {
     <div className="rx-page">
       <PageHeader
         title={`${greeting()}, ${state.organization?.name || 'team'}`}
-        subtitle="Your outreach at a glance across WhatsApp, Instagram, and Email."
+        subtitle="Outreach overview — org KPIs, channel health, and recent replies across campaigns."
         actions={
           <>
             <button
@@ -322,7 +322,7 @@ export function HomePage() {
                   <button
                     type="button"
                     className="rx-btn secondary sm"
-                    onClick={() => actions.setTab('connect')}
+                    onClick={() => actions.setTab('channels')}
                     data-testid={`home-connect-${ch}`}
                   >
                     <Plus size={12} /> Connect

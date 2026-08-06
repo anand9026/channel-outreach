@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { BackendWorkspaceCard } from '../components/BackendWorkspaceCard'
+import { ChannelsBoard } from '../components/channels/ChannelsBoard'
 import { IgIcon } from '../components/BrandIcons'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
@@ -162,7 +163,22 @@ export function ConnectPage() {
 
       <BackendWorkspaceCard />
 
-      <div className="rx-connect-grid three rx-mb-4">
+      <ChannelsBoard
+        whatsAppNumbers={state.whatsAppNumbers}
+        emailAccounts={state.emailAccounts}
+        instagramAccounts={state.instagramAccounts}
+        loadingGmail={loadingGmail}
+        loadingWa={loadingWa}
+        onConnectWa={() => setWaDrawer(true)}
+        onConnectIg={() => setIgDrawer(true)}
+        onConnectGmail={() => void connectGmail()}
+        onRefreshGmail={() => void refreshGmail()}
+        onRefreshWa={() => void loadCloudApiTestNumber()}
+      />
+
+      <details className="rx-legacy-connect rx-mt-4">
+        <summary className="rx-text-sm rx-muted">Legacy channel cards</summary>
+      <div className="rx-connect-grid three rx-mb-4 rx-mt-4">
         {/* WhatsApp */}
         <article className={`rx-connect-card${waConnected ? ' is-connected' : ''}`}>
           <div className="rx-connect-icon wa">
@@ -342,6 +358,7 @@ export function ConnectPage() {
           </div>
         </article>
       </div>
+      </details>
 
       {mode === 'none' ? (
         <EmptyState

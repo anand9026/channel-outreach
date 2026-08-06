@@ -112,17 +112,18 @@ export function CommandPalette() {
 
   const commands: Command[] = useMemo(() => {
     const nav =
-      (id: 'home' | 'campaigns' | 'quicksend' | 'inbox' | 'templates' | 'analytics') => () => {
+      (id: 'overview' | 'campaigns' | 'quicksend' | 'inbox' | 'templates' | 'reports' | 'channels') => () => {
         actions.setTab(id)
         close()
       }
     const list: Command[] = [
-      { id: 'go-home', label: 'Go to Home', icon: <Sparkles size={14} />, action: nav('home'), keywords: 'dashboard overview', group: 'nav' },
-      { id: 'go-campaigns', label: 'Go to Campaigns', icon: <Send size={14} />, action: nav('campaigns'), keywords: 'outreach', group: 'nav' },
+      { id: 'go-overview', label: 'Go to Overview', icon: <Sparkles size={14} />, action: nav('overview'), keywords: 'dashboard home', group: 'nav' },
+      { id: 'go-campaigns', label: 'Go to Campaigns', icon: <Send size={14} />, action: nav('campaigns'), keywords: 'outreach kanban', group: 'nav' },
       { id: 'go-quicksend', label: 'Go to Quick Send', icon: <Zap size={14} />, action: nav('quicksend'), keywords: 'sandbox test csv', group: 'nav' },
       { id: 'go-inbox', label: 'Go to Inbox', icon: <Inbox size={14} />, action: nav('inbox'), keywords: 'chat reply messages', group: 'nav' },
-      { id: 'go-templates', label: 'Go to Messages', icon: <LayoutTemplate size={14} />, action: nav('templates'), keywords: 'templates library', group: 'nav' },
-      { id: 'go-analytics', label: 'Go to Results', icon: <BarChart3 size={14} />, action: nav('analytics'), keywords: 'analytics stats', group: 'nav' },
+      { id: 'go-templates', label: 'Go to Templates', icon: <LayoutTemplate size={14} />, action: nav('templates'), keywords: 'templates library messages', group: 'nav' },
+      { id: 'go-reports', label: 'Go to Reports', icon: <BarChart3 size={14} />, action: nav('reports'), keywords: 'analytics stats results', group: 'nav' },
+      { id: 'go-channels', label: 'Go to Channels', icon: <Mail size={14} />, action: nav('channels'), keywords: 'connect whatsapp gmail', group: 'nav' },
       {
         id: 'new-outreach',
         label: 'New outreach',

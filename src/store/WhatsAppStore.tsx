@@ -26,6 +26,7 @@ import {
   seedWhatsAppNumbers,
 } from '../data/seed'
 import { demoWaitMs, firstChannel, secondChannel } from '../lib/cascade'
+import { buildOutreachHash, hashEquals, parseOutreachHash } from '../lib/outreach-routing'
 import { formatOutreachTimestamp } from '../lib/outreach-timestamp'
 import { extractSlots, mergeBindings, renderWithBindings } from '../lib/variables'
 import {
@@ -78,15 +79,18 @@ import {
   type CollectionList,
   type ConnectionMode,
   type Conversation,
+  type ConversationIntent,
   type DeliveryStatus,
   type EmailAccount,
   type EmailProvider,
   type Influencer,
+  type InboxFilters,
   type InstagramAccount,
   type Message,
   type OutreachChannel,
   type TabId,
   type Template,
+  normalizeTab,
   type TemplateCategory,
   type VariableBinding,
   type WhatsAppNumber,
@@ -119,6 +123,12 @@ export interface AppState {
   /** 'all' | 'none' (org-level) | brand id */
   brandFilter: string
   selectedConversationId: string | null
+  /** Campaign scope for the selected inbox row (creator × campaign). */
+  selectedInboxCampaignId: string | null
+  /** Inbox list filter — all campaigns or a specific campaign id. */
+  inboxCampaignFilter: 'all' | string
+  inboxFilters: InboxFilters
+  detailCampaignId: string | null
   toasts: ToastItem[]
   connectModalOpen: boolean
   connectStep: number
@@ -159,7 +169,12 @@ type Action =
   | { type: 'SET_TAB'; tab: TabId }
   | { type: 'SELECT_CAMPAIGN'; campaignId: string | null }
   | { type: 'SET_BRAND_FILTER'; brandFilter: string }
-  | { type: 'SELECT_CONVERSATION'; conversationId: string | null }
+  | { type: 'SELECT_CONVERSATION'; conversationId: string | null; campaignId?: string | null }
+  | { type: 'SET_INBOX_CAMPAIGN_FILTER'; campaignId: 'all' | string }
+  | { type: 'SET_INBOX_FILTERS'; patch: Partial<InboxFilters> }
+  | { type: 'RESET_INBOX_FILTERS' }
+  | { type: 'SET_DETAIL_CAMPAIGN'; campaignId: string | null }
+  | { type: 'SET_CONVERSATION_INTENT'; conversationId: string; intent: ConversationIntent | null }
   | { type: 'ADD_TOAST'; toast: Omit<ToastItem, 'id'> }
   | { type: 'DISMISS_TOAST'; id: string }
   | { type: 'OPEN_CONNECT'; open: boolean; kind?: OutreachChannel }
@@ -356,10 +371,21 @@ const initialState: AppState = {
   messages: seedMessages,
   analytics: seedAnalytics,
   team: seedTeam,
-  activeTab: 'home',
+  activeTab: 'campaigns',
   selectedCampaignId: null,
   brandFilter: 'all',
   selectedConversationId: null,
+  selectedInboxCampaignId: null,
+  inboxCampaignFilter: 'all',
+  inboxFilters: {
+    campaignIds: [],
+    channels: [],
+    statuses: [],
+    intents: [],
+    assigneeId: null,
+    tags: [],
+  },
+  detailCampaignId: null,
   toasts: [],
   connectModalOpen: false,
   connectStep: 0,
@@ -785,15 +811,46 @@ function bumpAnalytics(
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_TAB':
-      return { ...state, activeTab: action.tab }
+      return { ...state, activeTab: normalizeTab(action.tab) }
     case 'SELECT_CAMPAIGN':
       return { ...state, selectedCampaignId: action.campaignId }
     case 'SET_BRAND_FILTER':
       return { ...state, brandFilter: action.brandFilter }
+    case 'SET_INBOX_CAMPAIGN_FILTER':
+      return { ...state, inboxCampaignFilter: action.campaignId }
+    case 'SET_INBOX_FILTERS':
+      return { ...state, inboxFilters: { ...state.inboxFilters, ...action.patch } }
+    case 'RESET_INBOX_FILTERS':
+      return {
+        ...state,
+        inboxFilters: {
+          campaignIds: [],
+          channels: [],
+          statuses: [],
+          intents: [],
+          assigneeId: null,
+          tags: [],
+        },
+      }
+    case 'SET_DETAIL_CAMPAIGN':
+      return { ...state, detailCampaignId: action.campaignId }
+    case 'SET_CONVERSATION_INTENT':
+      return {
+        ...state,
+        conversations: state.conversations.map((c) =>
+          c.id === action.conversationId ? { ...c, intent: action.intent ?? undefined } : c,
+        ),
+      }
     case 'SELECT_CONVERSATION':
       return {
         ...state,
         selectedConversationId: action.conversationId,
+        selectedInboxCampaignId:
+          action.conversationId === null
+            ? null
+            : action.campaignId !== undefined
+              ? action.campaignId
+              : state.selectedInboxCampaignId,
         conversations: state.conversations.map((c) =>
           c.id === action.conversationId ? { ...c, unreadCount: 0 } : c,
         ),
@@ -836,7 +893,7 @@ function reducer(state: AppState, action: Action): AppState {
         whatsAppNumbers: [...state.whatsAppNumbers, number],
         connectModalOpen: false,
         connectStep: 0,
-        activeTab: 'home',
+        activeTab: 'overview',
       }
     }
     case 'CONNECT_EMAIL': {
@@ -859,7 +916,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         emailAccounts: nextAccounts,
         emailModalOpen: false,
-        activeTab: 'home',
+        activeTab: 'overview',
       }
     }
     case 'SYNC_GMAIL': {
@@ -900,7 +957,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         instagramAccounts: [...state.instagramAccounts, account],
         instagramModalOpen: false,
-        activeTab: 'home',
+        activeTab: 'overview',
       }
     }
     case 'REACT_TO_MESSAGE': {
@@ -2646,7 +2703,12 @@ interface StoreContextValue {
     setTab: (tab: TabId) => void
     selectCampaign: (id: string | null) => void
     setBrandFilter: (brandFilter: string) => void
-    selectConversation: (id: string | null) => void
+    selectConversation: (id: string | null, campaignId?: string | null) => void
+    setInboxCampaignFilter: (campaignId: 'all' | string) => void
+    setInboxFilters: (patch: Partial<InboxFilters>) => void
+    resetInboxFilters: () => void
+    setDetailCampaign: (id: string | null) => void
+    setConversationIntent: (conversationId: string, intent: ConversationIntent | null) => void
     toast: (message: string, variant?: ToastItem['variant']) => void
     dismissToast: (id: string) => void
     openConnect: (open: boolean, kind?: OutreachChannel) => void
@@ -3511,7 +3573,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             },
           })
           if (tabHint === 'connect') {
-            dispatch({ type: 'SET_TAB', tab: 'connect' })
+            dispatch({ type: 'SET_TAB', tab: 'channels' })
           }
         } else if (gmailStatus === 'error') {
           dispatch({
@@ -3521,7 +3583,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
               variant: 'error',
             },
           })
-          dispatch({ type: 'SET_TAB', tab: 'connect' })
+          dispatch({ type: 'SET_TAB', tab: 'channels' })
         }
       } catch {
         /* API unreachable — leave emailAccounts as-is */
@@ -3535,6 +3597,39 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Deep-link hash routing: #/inbox?campaign=…
+  useEffect(() => {
+    const applyHash = () => {
+      const route = parseOutreachHash(window.location.hash)
+      dispatch({ type: 'SET_TAB', tab: route.tab })
+      if (route.campaignId) {
+        dispatch({ type: 'SET_INBOX_CAMPAIGN_FILTER', campaignId: route.campaignId })
+      }
+      if (route.detailCampaignId) {
+        dispatch({ type: 'SET_DETAIL_CAMPAIGN', campaignId: route.detailCampaignId })
+      }
+    }
+    if (window.location.hash) {
+      applyHash()
+    } else {
+      window.location.hash = buildOutreachHash({ tab: state.activeTab })
+    }
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const next = buildOutreachHash({
+      tab: state.activeTab,
+      campaignId: state.inboxCampaignFilter,
+      detailCampaignId: state.detailCampaignId,
+    })
+    if (!hashEquals(window.location.hash, next)) {
+      window.history.replaceState(null, '', next)
+    }
+  }, [state.activeTab, state.inboxCampaignFilter, state.detailCampaignId])
 
   // 15-second live polling loop for the WhatsApp inbox.
   useEffect(() => {
@@ -3702,8 +3797,15 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       setTab: (tab) => dispatch({ type: 'SET_TAB', tab }),
       selectCampaign: (id) => dispatch({ type: 'SELECT_CAMPAIGN', campaignId: id }),
       setBrandFilter: (brandFilter) => dispatch({ type: 'SET_BRAND_FILTER', brandFilter }),
-      selectConversation: (id) =>
-        dispatch({ type: 'SELECT_CONVERSATION', conversationId: id }),
+      selectConversation: (id, campaignId) =>
+        dispatch({ type: 'SELECT_CONVERSATION', conversationId: id, campaignId }),
+      setInboxCampaignFilter: (campaignId) =>
+        dispatch({ type: 'SET_INBOX_CAMPAIGN_FILTER', campaignId }),
+      setInboxFilters: (patch) => dispatch({ type: 'SET_INBOX_FILTERS', patch }),
+      resetInboxFilters: () => dispatch({ type: 'RESET_INBOX_FILTERS' }),
+      setDetailCampaign: (id) => dispatch({ type: 'SET_DETAIL_CAMPAIGN', campaignId: id }),
+      setConversationIntent: (conversationId, intent) =>
+        dispatch({ type: 'SET_CONVERSATION_INTENT', conversationId, intent }),
       toast,
       dismissToast: (id) => dispatch({ type: 'DISMISS_TOAST', id }),
       openConnect: (open, kind) => dispatch({ type: 'OPEN_CONNECT', open, kind }),

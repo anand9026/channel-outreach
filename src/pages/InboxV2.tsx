@@ -27,7 +27,18 @@ import {
   Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ConversationListRow } from '../components/inbox/ConversationListRow'
+import { CampaignInboxRow } from '../components/inbox/CampaignInboxRow'
+import { ChannelStripeTimeline } from '../components/inbox/ChannelStripeTimeline'
+import { InboxFilterDrawer } from '../components/inbox/InboxFilterDrawer'
+import { AiSuggestReply } from '../components/inbox/AiSuggestReply'
+import {
+  activeInboxFilterCount,
+  conversationPassesInboxFilters,
+} from '../components/inbox/inbox-filter-utils'
+import {
+  expandToInboxCampaignRows,
+  inboxRowMatchesCampaignFilter,
+} from '../components/inbox/inbox-campaign-rows'
 import {
   channelLabelShort,
   contactLineForConversation,
@@ -40,7 +51,8 @@ import { EmptyState } from '../components/EmptyState'
 import { IgIcon } from '../components/BrandIcons'
 import { whatsappMediaUrl, resolveOrgId } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { Conversation, Influencer, Message, OutreachChannel } from '../types'
+import type { Conversation, ConversationIntent, Influencer, Message, OutreachChannel } from '../types'
+import { AD_HOC_CAMPAIGN_ID } from '../types'
 
 function formatSince(ts: string | null): string {
   if (!ts) return 'never'
@@ -126,6 +138,7 @@ export function InboxV2() {
   const [syncing, setSyncing] = useState(false)
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
+  const [filterOpen, setFilterOpen] = useState(false)
 
   // Force re-render every 20s so the "last synced Xs ago" label ticks.
   const [, tick] = useState(0)
@@ -150,40 +163,76 @@ export function InboxV2() {
     return [...s].sort()
   }, [state.conversations])
 
-  const conversations = useMemo(() => {
-    return state.conversations
-      .filter((c) => {
+  const inboxRows = useMemo(() => {
+    const rows = expandToInboxCampaignRows(state.conversations, state.messages)
+    return rows
+      .filter((row) => inboxRowMatchesCampaignFilter(row, state.inboxCampaignFilter))
+      .filter((row) => {
         if (tab === 'all') return true
-        const chs = c.channels?.length ? c.channels : [c.channel]
-        return chs.includes(tab)
+        return row.channels.includes(tab)
       })
-      .filter((c) => (labelFilter ? (c.labels || []).includes(labelFilter) : true))
-      .filter((c) => {
-        const inf = state.influencers.find((i) => i.id === c.influencerId)
-        return passesSavedView(c, savedView, messagesByConv.get(c.id) || [], inf)
+      .filter((row) => {
+        const conv = state.conversations.find((c) => c.id === row.conversationId)
+        if (!conv) return false
+        return conversationPassesInboxFilters(conv, row, state.inboxFilters)
       })
-      .filter((c) => {
+      .filter((row) => {
+        const conv = state.conversations.find((c) => c.id === row.conversationId)
+        if (!conv) return false
+        if (labelFilter ? !(conv.labels || []).includes(labelFilter) : false) return false
+        const inf = state.influencers.find((i) => i.id === row.influencerId)
+        return passesSavedView(conv, savedView, messagesByConv.get(conv.id) || [], inf)
+      })
+      .filter((row) => {
         if (!search) return true
-        const inf = state.influencers.find((i) => i.id === c.influencerId)
+        const inf = state.influencers.find((i) => i.id === row.influencerId)
+        const campaign = state.campaigns.find((c) => c.id === row.campaignId)
+        const conv = state.conversations.find((c) => c.id === row.conversationId)
         return (
           inf?.name.toLowerCase().includes(search.toLowerCase()) ||
           inf?.handle.toLowerCase().includes(search.toLowerCase()) ||
           inf?.phone.toLowerCase().includes(search.toLowerCase()) ||
           (inf?.email || '').toLowerCase().includes(search.toLowerCase()) ||
-          c.lastPreview?.toLowerCase().includes(search.toLowerCase()) ||
-          (c.labels || []).some((l) => l.toLowerCase().includes(search.toLowerCase()))
+          (campaign?.name || '').toLowerCase().includes(search.toLowerCase()) ||
+          row.lastPreview?.toLowerCase().includes(search.toLowerCase()) ||
+          (conv?.labels || []).some((l) => l.toLowerCase().includes(search.toLowerCase()))
         )
       })
       .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
-  }, [state.conversations, state.influencers, tab, labelFilter, savedView, search, messagesByConv])
+  }, [
+    state.conversations,
+    state.messages,
+    state.inboxCampaignFilter,
+    state.influencers,
+    state.inboxFilters,
+    state.campaigns,
+    tab,
+    labelFilter,
+    savedView,
+    search,
+    messagesByConv,
+  ])
+
+  const selectedRow = useMemo(() => {
+    if (!state.selectedConversationId) return null
+    const match = inboxRows.find(
+      (r) =>
+        r.conversationId === state.selectedConversationId &&
+        (state.selectedInboxCampaignId
+          ? r.campaignId === state.selectedInboxCampaignId
+          : true),
+    )
+    return match || inboxRows.find((r) => r.conversationId === state.selectedConversationId) || null
+  }, [inboxRows, state.selectedConversationId, state.selectedInboxCampaignId])
 
   const selected = state.conversations.find((c) => c.id === state.selectedConversationId)
 
   useEffect(() => {
-    if (!selected && conversations.length > 0 && !selectMode) {
-      actions.selectConversation(conversations[0].id)
+    if (!selectedRow && inboxRows.length > 0 && !selectMode) {
+      const first = inboxRows[0]
+      actions.selectConversation(first.conversationId, first.campaignId)
     }
-  }, [conversations, selected, actions, selectMode])
+  }, [inboxRows, selectedRow, actions, selectMode])
 
   const { polling, lastSyncedAt, lastError, connection } = state.liveInbox
   const liveThreadCount = state.conversations.filter((c) => c.isLive).length
@@ -219,7 +268,7 @@ export function InboxV2() {
           <div>
             <h1 className="rx-page-title">Inbox</h1>
             <p className="rx-page-sub">
-              One conversation per creator — WhatsApp, Gmail, and more in a single thread.
+              One row per creator × campaign. Channels appear as stripes inside the thread.
             </p>
           </div>
           <div className="rx-row" style={{ gap: 8 }}>
@@ -289,11 +338,39 @@ export function InboxV2() {
           </div>
         </div>
 
-        {/* Saved views strip */}
+        {/* Campaign scope + saved views */}
+        <div className="rx-inbox-toolbar" data-testid="inbox-toolbar">
+          <label className="rx-inbox-campaign-picker">
+            <span className="rx-text-xs rx-muted">Campaign</span>
+            <select
+              className="rx-select sm"
+              value={state.inboxCampaignFilter}
+              onChange={(e) => actions.setInboxCampaignFilter(e.target.value as 'all' | string)}
+              data-testid="inbox-campaign-picker"
+            >
+              <option value="all">All campaigns</option>
+              {state.campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+              <option value={AD_HOC_CAMPAIGN_ID}>Ad-hoc</option>
+            </select>
+          </label>
+        </div>
+
         <div className="rx-saved-views" data-testid="saved-views">
-          <div className="rx-text-xs rx-muted" style={{ marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Filter size={11} /> Views
-          </div>
+          <button
+            type="button"
+            className={`rx-chip${activeInboxFilterCount(state.inboxFilters) ? ' is-active' : ''}`}
+            onClick={() => setFilterOpen(true)}
+            data-testid="open-inbox-filters"
+          >
+            <Filter size={11} /> Filters
+            {activeInboxFilterCount(state.inboxFilters) > 0 ? (
+              <span className="rx-nav-badge">{activeInboxFilterCount(state.inboxFilters)}</span>
+            ) : null}
+          </button>
           {savedViewDefs.map((v) => {
             const Icon = v.icon
             return (
@@ -321,7 +398,8 @@ export function InboxV2() {
               className="rx-btn secondary sm"
               disabled={selection.size === 0}
               onClick={() => {
-                actions.bulkResolve([...selection])
+                const convIds = [...new Set([...selection].map((rowId) => rowId.split('::')[0]))]
+                actions.bulkResolve(convIds)
                 actions.toast(`Resolved ${selection.size} thread${selection.size > 1 ? 's' : ''}`, 'success')
                 clearSelection()
               }}
@@ -335,7 +413,8 @@ export function InboxV2() {
               onChange={(e) => {
                 const memberId = e.target.value || undefined
                 if (selection.size > 0) {
-                  actions.bulkAssign([...selection], memberId)
+                  const convIds = [...new Set([...selection].map((rowId) => rowId.split('::')[0]))]
+                  actions.bulkAssign(convIds, memberId)
                   actions.toast(`Assigned ${selection.size} thread${selection.size > 1 ? 's' : ''}`, 'success')
                   clearSelection()
                 }
@@ -405,41 +484,55 @@ export function InboxV2() {
             )}
           </div>
 
-          {conversations.length === 0 ? (
+          {inboxRows.length === 0 ? (
             <div style={{ padding: 32 }}>
               <EmptyState
                 title={savedView === 'creators' ? 'No creator conversations yet' : 'No conversations match'}
                 body={
                   savedView === 'creators'
                     ? 'Send a campaign or Quick Send to start a thread. Switch to All mail to see synced Gmail.'
-                    : 'Try switching the saved view or clearing filters.'
+                    : 'Try switching the saved view, campaign filter, or clearing search.'
                 }
               />
             </div>
           ) : (
-            conversations.map((c) => {
-              const inf = state.influencers.find((i) => i.id === c.influencerId)
+            inboxRows.map((row) => {
+              const conv = state.conversations.find((c) => c.id === row.conversationId)!
+              const inf = state.influencers.find((i) => i.id === row.influencerId)
+              const campaign = state.campaigns.find((c) => c.id === row.campaignId)
+              const rowSelected =
+                state.selectedConversationId === row.conversationId &&
+                (state.selectedInboxCampaignId
+                  ? state.selectedInboxCampaignId === row.campaignId
+                  : selectedRow?.rowId === row.rowId)
               return (
-                <ConversationListRow
-                  key={c.id}
-                  conversation={c}
+                <CampaignInboxRow
+                  key={row.rowId}
+                  row={row}
+                  conversation={conv}
+                  campaign={campaign}
                   influencer={inf}
-                  selected={state.selectedConversationId === c.id}
+                  selected={rowSelected}
                   selectMode={selectMode}
-                  checked={selection.has(c.id)}
+                  checked={selection.has(row.rowId)}
                   onSelect={() => {
-                    if (selectMode) toggleSelected(c.id)
-                    else actions.selectConversation(c.id)
+                    if (selectMode) toggleSelected(row.rowId)
+                    else actions.selectConversation(row.conversationId, row.campaignId)
                   }}
-                  onToggleCheck={() => toggleSelected(c.id)}
+                  onToggleCheck={() => toggleSelected(row.rowId)}
                 />
               )
             })
           )}
         </div>
 
-        {selected ? <Thread /> : <EmptyThread />}
+        {selected && selectedRow ? (
+          <Thread scopedCampaignId={selectedRow.campaignId} />
+        ) : (
+          <EmptyThread />
+        )}
       </div>
+      <InboxFilterDrawer open={filterOpen} onClose={() => setFilterOpen(false)} />
     </>
   )
 }
@@ -586,10 +679,15 @@ function MessageBubble({
   )
 }
 
-function Thread() {
+function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
   const { state, actions } = useWhatsAppStore()
   const conv = state.conversations.find((c) => c.id === state.selectedConversationId)!
   const inf = state.influencers.find((i) => i.id === conv.influencerId)
+  const scopedCampaign = state.campaigns.find((c) => c.id === scopedCampaignId)
+  const campaignTitle =
+    scopedCampaignId === AD_HOC_CAMPAIGN_ID
+      ? 'Ad-hoc'
+      : scopedCampaign?.name || 'Campaign'
 
   // Unified conversation — one row per person; channel threads live under channelThreads.
   const siblings = useMemo(() => {
@@ -619,9 +717,13 @@ function Thread() {
 
   const messages = useMemo(() => {
     return state.messages
-      .filter((m) => m.conversationId === conv.id)
+      .filter((m) => {
+        if (m.conversationId !== conv.id) return false
+        if (scopedCampaignId === AD_HOC_CAMPAIGN_ID) return !m.campaignId
+        return m.campaignId === scopedCampaignId || (!m.campaignId && scopedCampaignId === conv.lastCampaignId)
+      })
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  }, [state.messages, conv.id])
+  }, [state.messages, conv.id, scopedCampaignId, conv.lastCampaignId])
 
   const activeConv: Conversation = useMemo(() => {
     if (!unified) return conv
@@ -717,6 +819,7 @@ function Thread() {
           </div>
           <div className="rx-thread-head-copy">
             <div className="rx-thread-title">{displayName}</div>
+            <div className="rx-thread-campaign mono">{campaignTitle}</div>
             <div className="rx-conv-channels rx-thread-channels">
               {availableChannels.map((ch) => (
                 <span key={ch} className={`rx-channel-pill ${ch}`}>
@@ -727,6 +830,27 @@ function Thread() {
             {contactLine ? (
               <div className="rx-thread-contact mono">{contactLine}</div>
             ) : null}
+            <div className="rx-thread-intent-row">
+              <span className="rx-text-xs rx-muted">Intent</span>
+              <select
+                className="rx-select sm"
+                value={conv.intent || ''}
+                onChange={(e) =>
+                  actions.setConversationIntent(
+                    conv.id,
+                    (e.target.value || null) as ConversationIntent | null,
+                  )
+                }
+                data-testid="conversation-intent"
+              >
+                <option value="">None</option>
+                <option value="interested">Interested</option>
+                <option value="pricing">Pricing</option>
+                <option value="negotiation">Negotiation</option>
+                <option value="accepted">Accepted</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -827,9 +951,10 @@ function Thread() {
             {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
           </div>
         ) : (
-          messages.map((m) => {
-            const msgChannel = unified && (conv.channels?.length || 0) > 1 ? m.channel : conv.channel
-            return (
+          <ChannelStripeTimeline
+            messages={messages}
+            showStripes={(conv.channels?.length || 0) > 1 || unified}
+            renderMessage={(m, msgChannel) => (
               <MessageBubble
                 key={m.id}
                 msg={m}
@@ -847,12 +972,17 @@ function Thread() {
                 }}
                 onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
               />
-            )
-          })
+            )}
+          />
         )}
       </div>
 
       <div className="rx-composer" data-channel={activeConv.channel}>
+        <AiSuggestReply
+          messages={messages}
+          creatorName={displayName}
+          onInsert={insertAtCaret}
+        />
         {unified && canUnify && (
           <div className="rx-composer-channel-row" data-testid="reply-channel-picker">
             <span className="rx-text-xs rx-muted">Reply via</span>

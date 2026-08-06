@@ -41,7 +41,55 @@ export interface CascadeOptions {
 }
 export type PhoneQuality = 'GREEN' | 'YELLOW' | 'RED'
 export type EmailProvider = 'gmail' | 'sendgrid' | 'ses' | 'smtp'
-export type TabId = 'home' | 'floor' | 'connect' | 'templates' | 'campaigns' | 'inbox' | 'analytics' | 'quicksend'
+export type TabId =
+  | 'overview'
+  | 'campaigns'
+  | 'inbox'
+  | 'channels'
+  | 'templates'
+  | 'reports'
+  | 'quicksend'
+  | 'floor'
+  /** @deprecated use overview */
+  | 'home'
+  /** @deprecated use channels */
+  | 'connect'
+  /** @deprecated use reports */
+  | 'analytics'
+
+/** Normalize legacy tab ids to outreach module tabs. */
+export function normalizeTab(tab: TabId): TabId {
+  if (tab === 'home' || tab === 'floor') return 'overview'
+  if (tab === 'connect') return 'channels'
+  if (tab === 'analytics') return 'reports'
+  return tab
+}
+
+export type CampaignLifecycleStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'attention'
+
+export type ConversationIntent =
+  | 'pricing'
+  | 'interested'
+  | 'negotiation'
+  | 'accepted'
+  | 'rejected'
+
+export const AD_HOC_CAMPAIGN_ID = 'ad-hoc'
+
+export interface InboxFilters {
+  campaignIds: string[]
+  channels: OutreachChannel[]
+  statuses: ConversationStatus[]
+  intents: ConversationIntent[]
+  assigneeId: string | null
+  tags: string[]
+}
 
 /** Resolved at send-time from org / brand / campaign / influencer — not free-typed per send. */
 export type DataFieldKey =
@@ -160,7 +208,7 @@ export interface Campaign {
   brandId: string | null
   name: string
   kind: CampaignKind
-  status: 'draft' | 'active' | 'completed'
+  status: 'draft' | 'active' | 'completed' | CampaignLifecycleStatus
   /** How recipients were chosen for outreach */
   audienceSource: AudienceSource
   /** Set when audienceSource === 'collection' */
@@ -296,6 +344,36 @@ export interface Conversation {
   providerThreadId?: string
   /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */
   labels?: string[]
+  /** AI or manual intent signal */
+  intent?: ConversationIntent
+}
+
+/** One inbox list row — scoped to creator × campaign (blueprint §8). */
+export interface InboxCampaignRow {
+  rowId: string
+  conversationId: string
+  campaignId: string
+  influencerId: string
+  channel: OutreachChannel
+  channels: OutreachChannel[]
+  status: ConversationStatus
+  lastMessageAt: string
+  lastPreview: string
+  unreadCount: number
+  labels?: string[]
+  intent?: ConversationIntent
+  isCreator?: boolean
+  contactName?: string
+  outreachConversationId?: string
+  channelThreads?: Conversation['channelThreads']
+  phoneNumberId?: string
+  emailAccountId?: string
+  gmailThreadId?: string
+  outreachThreadId?: string
+  isLive?: boolean
+  assignedTo?: string
+  lastInboundAt?: string
+  campaignIds: string[]
 }
 
 export interface TeamMember {
