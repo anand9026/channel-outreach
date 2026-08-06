@@ -31,6 +31,9 @@ import { CampaignInboxRow } from '../components/inbox/CampaignInboxRow'
 import { ChannelStripeTimeline } from '../components/inbox/ChannelStripeTimeline'
 import { InboxFilterDrawer } from '../components/inbox/InboxFilterDrawer'
 import { AiSuggestReply } from '../components/inbox/AiSuggestReply'
+import { EmailMessageBody } from '../components/inbox/EmailMessageBody'
+import { ReplyChannelSwitcher } from '../components/inbox/ReplyChannelSwitcher'
+import { ThreadHeaderMenu } from '../components/inbox/ThreadHeaderMenu'
 import {
   activeInboxFilterCount,
   conversationPassesInboxFilters,
@@ -51,8 +54,9 @@ import { EmptyState } from '../components/EmptyState'
 import { IgIcon } from '../components/BrandIcons'
 import { whatsappMediaUrl, resolveOrgId } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { Conversation, ConversationIntent, Influencer, Message, OutreachChannel } from '../types'
+import type { Conversation, Influencer, Message, OutreachChannel } from '../types'
 import { AD_HOC_CAMPAIGN_ID } from '../types'
+import { defaultEmailReplySubject } from '../lib/email-reply-subject'
 
 function formatSince(ts: string | null): string {
   if (!ts) return 'never'
@@ -603,13 +607,26 @@ function MessageBubble({
             {channelLabelShort(channel)}
           </div>
         ) : null}
-        {msg.subject ? (
+        {msg.subject && channel !== 'email' ? (
           <div className="rx-text-xs rx-muted rx-mb-2">
             <strong>{msg.subject}</strong>
           </div>
         ) : null}
         {msg.mediaId ? <InboundMedia msg={msg} /> : null}
-        {msg.body ? <div className="rx-msg" data-channel={channel}>{msg.body}</div> : null}
+        {channel === 'email' ? (
+          <div className="rx-msg rx-msg-email" data-channel={channel}>
+            <EmailMessageBody
+              subject={msg.subject}
+              from={msg.emailFrom}
+              to={msg.emailTo}
+              body={msg.body}
+              htmlBody={msg.htmlBody}
+              rawBody={msg.rawBody}
+            />
+          </div>
+        ) : msg.body ? (
+          <div className="rx-msg" data-channel={channel}>{msg.body}</div>
+        ) : null}
         <div className="rx-msg-meta">
           <span>
             {new Date(msg.createdAt).toLocaleTimeString('en', {
@@ -728,29 +745,46 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
   }, [state.messages, conv.id, scopedCampaignId, conv.lastCampaignId, unified])
 
   const activeConv: Conversation = useMemo(() => {
-    if (!unified) return conv
     const wa = conv.channelThreads?.whatsapp
     const em = conv.channelThreads?.email
-    return {
+    const base = {
       ...conv,
-      channel: replyChannel,
       phoneNumberId: wa?.phoneNumberId || conv.phoneNumberId,
       emailAccountId: em?.emailAccountId || conv.emailAccountId,
       gmailThreadId: em?.gmailThreadId || conv.gmailThreadId,
+    }
+    if (!canUnify) {
+      return {
+        ...base,
+        channel: replyChannel,
+        outreachThreadId:
+          replyChannel === 'whatsapp'
+            ? wa?.outreachThreadId || conv.outreachThreadId
+            : em?.outreachThreadId || conv.outreachThreadId,
+      }
+    }
+    return {
+      ...base,
+      channel: replyChannel,
       outreachThreadId:
         replyChannel === 'whatsapp'
           ? wa?.outreachThreadId || conv.outreachThreadId
           : em?.outreachThreadId || conv.outreachThreadId,
     }
-  }, [unified, conv, replyChannel])
+  }, [canUnify, conv, replyChannel])
 
   const [draft, setDraft] = useState('')
+  const [emailSubject, setEmailSubject] = useState('')
   const [replying, setReplying] = useState(false)
   const [showEmoji, setShowEmoji] = useState(false)
   const [showCanned, setShowCanned] = useState(false)
-  const [showLabelEditor, setShowLabelEditor] = useState(false)
-  const [labelInput, setLabelInput] = useState('')
   const attachRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (replyChannel === 'email') {
+      setEmailSubject(defaultEmailReplySubject(messages))
+    }
+  }, [replyChannel, conv.id, messages])
 
   const canReply = actions.canFreeformReply(activeConv.id)
   const windowOpen = activeConv.channel === 'email' || actions.isWithin24hWindow(activeConv.id)
@@ -772,7 +806,9 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
         const ok = await actions.sendWhatsAppReplyLive(activeConv.id, text)
         if (!ok) setDraft(text)
       } else if (activeConv.channel === 'email' && activeConv.isLive) {
-        const ok = await actions.sendGmailReplyLive(activeConv.id, text)
+        const ok = await actions.sendGmailReplyLive(activeConv.id, text, {
+          subject: emailSubject.trim(),
+        })
         if (!ok) setDraft(text)
       } else {
         const ok = actions.sendReply(activeConv.id, text)
@@ -801,7 +837,6 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
     const cur = conv.labels || []
     if (cur.includes(clean)) return
     actions.setConversationLabels(conv.id, [...cur, clean])
-    setLabelInput('')
   }
   const removeLabel = (l: string) => {
     actions.setConversationLabels(conv.id, (conv.labels || []).filter((x) => x !== l))
@@ -832,27 +867,20 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             {contactLine ? (
               <div className="rx-thread-contact mono">{contactLine}</div>
             ) : null}
-            <div className="rx-thread-intent-row">
-              <span className="rx-text-xs rx-muted">Intent</span>
-              <select
-                className="rx-select sm"
-                value={conv.intent || ''}
-                onChange={(e) =>
-                  actions.setConversationIntent(
-                    conv.id,
-                    (e.target.value || null) as ConversationIntent | null,
-                  )
-                }
-                data-testid="conversation-intent"
-              >
-                <option value="">None</option>
-                <option value="interested">Interested</option>
-                <option value="pricing">Pricing</option>
-                <option value="negotiation">Negotiation</option>
-                <option value="accepted">Accepted</option>
-                <option value="rejected">Rejected</option>
-              </select>
-            </div>
+            {(conv.labels || []).length > 0 ? (
+              <div className="rx-thread-label-glance">
+                {(conv.labels || []).slice(0, 2).map((l) => (
+                  <span key={l} className="rx-chip xs muted">
+                    <Tag size={9} /> {l}
+                  </span>
+                ))}
+                {(conv.labels || []).length > 2 ? (
+                  <span className="rx-text-xs rx-muted">
+                    +{(conv.labels || []).length - 2} more
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -881,51 +909,15 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
               </button>
             </div>
           ) : null}
-          {(conv.labels || []).map((l) => (
-            <span key={l} className="rx-chip xs">
-              <Tag size={9} /> {l}
-              <button
-                type="button"
-                className="rx-chip-x"
-                aria-label={`Remove label ${l}`}
-                onClick={() => removeLabel(l)}
-              >
-                <X size={9} />
-              </button>
-            </span>
-          ))}
-          <div style={{ position: 'relative' }}>
-            <button
-              type="button"
-              className="rx-btn ghost sm"
-              onClick={() => setShowLabelEditor((v) => !v)}
-              data-testid="add-label-btn"
-            >
-              <Tag size={12} /> Label
-            </button>
-            {showLabelEditor && (
-              <div className="rx-label-popover" data-testid="label-popover">
-                <input
-                  className="rx-input"
-                  placeholder="Add a label…"
-                  value={labelInput}
-                  onChange={(e) => setLabelInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); addLabel(labelInput) }
-                    if (e.key === 'Escape') setShowLabelEditor(false)
-                  }}
-                  autoFocus
-                />
-                <div className="rx-label-suggest">
-                  {SUGGESTED_LABELS.filter((l) => !(conv.labels || []).includes(l)).map((l) => (
-                    <button key={l} type="button" className="rx-chip" onClick={() => addLabel(l)}>
-                      <Tag size={10} /> {l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <ThreadHeaderMenu
+            conversationId={conv.id}
+            intent={conv.intent}
+            labels={conv.labels || []}
+            suggestedLabels={SUGGESTED_LABELS}
+            onIntentChange={(intent) => actions.setConversationIntent(conv.id, intent)}
+            onAddLabel={addLabel}
+            onRemoveLabel={removeLabel}
+          />
           {conv.campaignIds.slice(0, 2).map((cid) => {
             const c = state.campaigns.find((x) => x.id === cid)
             if (!c) return null
@@ -985,22 +977,14 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
           creatorName={displayName}
           onInsert={insertAtCaret}
         />
-        {unified && canUnify && (
-          <div className="rx-composer-channel-row" data-testid="reply-channel-picker">
-            <span className="rx-text-xs rx-muted">Reply via</span>
-            <div className="rx-seg sm">
-              {availableChannels.map((ch) => (
-                <button
-                  key={ch}
-                  type="button"
-                  className={`rx-seg-btn${replyChannel === ch ? ' is-active' : ''}`}
-                  onClick={() => setReplyChannel(ch)}
-                  data-testid={`reply-channel-${ch}`}
-                >
-                  {channelLabelShort(ch)}
-                </button>
-              ))}
-            </div>
+        {canUnify && (
+          <div className="rx-composer-channel-row">
+            <ReplyChannelSwitcher
+              channels={availableChannels}
+              value={replyChannel}
+              onChange={setReplyChannel}
+              disabled={replying}
+            />
           </div>
         )}
         {activeConv.channel === 'whatsapp' && (
@@ -1030,6 +1014,21 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
                 ? '● Instagram 24-hour DM window open'
                 : '● DM window closed — send a story reply or template'}
             </span>
+          </div>
+        )}
+        {activeConv.channel === 'email' && (
+          <div className="rx-composer-email-subject" data-testid="composer-email-subject">
+            <label className="rx-composer-email-subject-label" htmlFor="email-subject-input">
+              Subject
+            </label>
+            <input
+              id="email-subject-input"
+              className="rx-input"
+              value={emailSubject}
+              onChange={(e) => setEmailSubject(e.target.value)}
+              disabled={!canReply || replying}
+              placeholder="Re: …"
+            />
           </div>
         )}
         <div className="rx-composer-row">
@@ -1131,10 +1130,10 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             className="rx-textarea"
             placeholder={
               canReply
-                ? unified
-                  ? `Reply on ${channelLabelShort(activeConv.channel)}…`
-                  : 'Type a reply…'
-                : 'Reply window closed'
+                ? `Reply on ${channelLabelShort(activeConv.channel)}…`
+                : activeConv.channel === 'whatsapp'
+                  ? '24h window closed — use a template'
+                  : 'Reply unavailable'
             }
             rows={1}
             value={draft}

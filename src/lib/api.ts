@@ -201,6 +201,8 @@ export type GmailThreadMessage = {
   to: string
   subject: string
   snippet: string
+  text_body?: string
+  html_body?: string | null
   date: string | null
   internal_date: string
 }

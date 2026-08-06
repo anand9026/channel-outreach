@@ -1,11 +1,19 @@
 import { Sparkles, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { formatEmailForDisplay } from '../../lib/format-email-for-display'
 import type { Message } from '../../types'
 
 type Props = {
   messages: Message[]
   creatorName: string
   onInsert: (text: string) => void
+}
+
+function inboundText(msg: Message): string {
+  if (msg.channel === 'email') {
+    return formatEmailForDisplay(msg.rawBody || msg.htmlBody || msg.body).primary
+  }
+  return msg.body || ''
 }
 
 /** Stub AI suggest-reply strip (blueprint §11) — never auto-sends. */
@@ -20,7 +28,7 @@ export function AiSuggestReply({ messages, creatorName, onInsert }: Props) {
       setSuggestion(null)
       return
     }
-    const body = (lastInbound.body || '').toLowerCase()
+    const body = inboundText(lastInbound).toLowerCase()
     let text = `Thanks ${creatorName.split(' ')[0] || 'there'} — happy to share more details. What timeline works for you?`
     if (body.includes('price') || body.includes('rate') || body.includes('inr') || body.includes('₹')) {
       text = `Thanks for sharing your rates, ${creatorName.split(' ')[0] || 'there'}. Can we align on deliverables and usage rights before we finalize?`

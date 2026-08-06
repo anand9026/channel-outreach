@@ -272,6 +272,11 @@ export interface Message {
   direction: MessageDirection
   subject?: string
   body: string
+  /** Raw Gmail snippet / SQL text before inbox formatting */
+  rawBody?: string
+  htmlBody?: string
+  emailFrom?: string
+  emailTo?: string
   status: DeliveryStatus
   isTemplate: boolean
   createdAt: string

@@ -2337,6 +2337,8 @@ function reducer(state: AppState, action: Action): AppState {
             m.text_body ||
             m.html_body ||
             (m.error_message ? `[failed] ${m.error_message}` : ''),
+          rawBody: m.text_body || undefined,
+          htmlBody: m.html_body || undefined,
           status,
           isTemplate: m.message_type === 'template',
           createdAt: m.provider_created_at || nowIso(),
@@ -2545,7 +2547,11 @@ function reducer(state: AppState, action: Action): AppState {
           channel: 'email',
           direction,
           subject: m.subject || undefined,
-          body: m.snippet || '(no content)',
+          body: m.text_body || m.snippet || '(no content)',
+          rawBody: m.text_body || m.snippet || undefined,
+          htmlBody: m.html_body || undefined,
+          emailFrom: m.from || undefined,
+          emailTo: m.to || undefined,
           status: direction === 'outbound' ? 'delivered' : 'delivered',
           isTemplate: false,
           createdAt: m.internal_date || nowIso(),
@@ -2929,7 +2935,11 @@ interface StoreContextValue {
     setLivePolling: (polling: boolean) => void
     syncLiveInboxNow: () => Promise<void>
     sendWhatsAppReplyLive: (conversationId: string, body: string) => Promise<boolean>
-    sendGmailReplyLive: (conversationId: string, body: string) => Promise<boolean>
+    sendGmailReplyLive: (
+      conversationId: string,
+      body: string,
+      options?: { subject?: string },
+    ) => Promise<boolean>
     setTheme: (theme: 'light' | 'dark' | 'system') => void
     enableNotifications: () => Promise<boolean>
     disableNotifications: () => void
@@ -3497,7 +3507,11 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
   )
 
   const sendGmailReplyLive = useCallback(
-    async (conversationId: string, body: string) => {
+    async (
+      conversationId: string,
+      body: string,
+      options?: { subject?: string },
+    ) => {
       const conv = stateRef.current.conversations.find(
         (c) => c.id === conversationId,
       )
@@ -3533,11 +3547,12 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       const prior = stateRef.current.messages
         .filter((m) => m.conversationId === conversationId && m.subject)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
-      const subject = prior?.subject
+      const autoSubject = prior?.subject
         ? prior.subject.toLowerCase().startsWith('re:')
           ? prior.subject
           : `Re: ${prior.subject}`
         : 'Re: your message'
+      const subject = (options?.subject || autoSubject).trim() || autoSubject
 
       const msgId = uid('msg')
       dispatch({ type: 'SEND_REPLY', conversationId, body, msgId, channel: 'email' })
