@@ -4246,20 +4246,127 @@ a {
 .rx-msg-channel-chip.email { color: #c5221f; border-color: rgba(234, 67, 53, 0.35); background: rgba(66, 133, 244, 0.06); }
 .rx-msg-channel-chip.email .rx-msg-channel-dot { background: #ea4335; }
 
-/* Unified view uses a neutral, subtly-tinted background so bubbles keep
-   their own brand colour without a single-channel theme dominating. */
+/* Unified view — neutral canvas, chat-style timeline */
 .rx-thread[data-channel='unified'] .rx-thread-head {
-  background: linear-gradient(90deg,
-    rgba(37, 211, 102, 0.06) 0%,
-    rgba(225, 48, 108, 0.06) 50%,
-    rgba(66, 133, 244, 0.06) 100%);
-}
-.rx-thread[data-channel='unified'] .rx-thread-body {
   background: var(--surface);
-  background-image:
-    radial-gradient(circle at 12% 18%, rgba(37, 211, 102, 0.05), transparent 40%),
-    radial-gradient(circle at 88% 28%, rgba(225, 48, 108, 0.05), transparent 40%),
-    radial-gradient(circle at 52% 92%, rgba(66, 133, 244, 0.05), transparent 45%);
+  border-bottom: 1px solid var(--border);
+}
+
+.rx-thread[data-channel='unified'] .rx-thread-body {
+  background: color-mix(in srgb, var(--surface-2) 40%, var(--surface));
+  padding: 12px 16px 20px;
+}
+
+.rx-unified-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 680px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.rx-timeline-day {
+  align-self: center;
+  margin: 10px 0 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.rx-thread-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rx-thread-campaign-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.rx-thread-subline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.rx-thread-contact-inline {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.rx-thread-channels {
+  margin-top: 0;
+}
+
+/* Compact email bubbles in unified chat */
+.rx-email-msg.is-compact {
+  padding: 10px 12px;
+  border-radius: 14px;
+  box-shadow: none;
+  max-width: min(100%, 420px);
+}
+
+.rx-msg-row.out .rx-email-msg.is-compact {
+  background: color-mix(in srgb, var(--email-soft, #e8f0fe) 50%, var(--surface));
+  border-color: color-mix(in srgb, var(--email, #ea4335) 14%, var(--border));
+}
+
+.rx-msg-row.in .rx-email-msg.is-compact {
+  background: var(--surface);
+}
+
+.rx-email-msg-subject-compact {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-2);
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+
+.rx-email-msg.is-compact .rx-email-msg-primary {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rx-email-msg.is-compact .rx-email-msg-quoted-toggle {
+  padding: 2px 6px;
+  font-size: 10px;
+  margin-top: 6px;
+}
+
+.rx-email-msg.is-compact .rx-email-msg-quoted {
+  font-size: 11px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+
+.rx-thread-body[data-channel='unified'] .rx-msg-channel-chip {
+  margin-bottom: 2px;
+  font-size: 10px;
+  padding: 2px 7px;
+}
+
+.rx-reply-channel-tab.is-muted:not(.is-active) {
+  opacity: 0.55;
+}
+
+.rx-reply-channel-tab.is-muted.is-active {
+  opacity: 0.75;
 }
 
 /* =========================================================================

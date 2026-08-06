@@ -8,6 +8,7 @@ type Props = {
   value: OutreachChannel
   onChange: (channel: OutreachChannel) => void
   disabled?: boolean
+  whatsappWindowOpen?: boolean
 }
 
 function ChannelIcon({ channel }: { channel: OutreachChannel }) {
@@ -17,7 +18,13 @@ function ChannelIcon({ channel }: { channel: OutreachChannel }) {
 }
 
 /** Composer channel picker — icon tabs, one active reply medium. */
-export function ReplyChannelSwitcher({ channels, value, onChange, disabled }: Props) {
+export function ReplyChannelSwitcher({
+  channels,
+  value,
+  onChange,
+  disabled,
+  whatsappWindowOpen = true,
+}: Props) {
   if (channels.length < 2) return null
 
   return (
@@ -26,6 +33,7 @@ export function ReplyChannelSwitcher({ channels, value, onChange, disabled }: Pr
       <div className="rx-reply-channel-tabs" role="tablist" aria-label="Reply channel">
         {channels.map((ch) => {
           const active = value === ch
+          const waClosed = ch === 'whatsapp' && !whatsappWindowOpen
           return (
             <button
               key={ch}
@@ -33,9 +41,10 @@ export function ReplyChannelSwitcher({ channels, value, onChange, disabled }: Pr
               role="tab"
               aria-selected={active}
               disabled={disabled}
-              className={`rx-reply-channel-tab ${ch}${active ? ' is-active' : ''}`}
+              className={`rx-reply-channel-tab ${ch}${active ? ' is-active' : ''}${waClosed ? ' is-muted' : ''}`}
               onClick={() => onChange(ch)}
               data-testid={`reply-channel-${ch}`}
+              title={waClosed ? '24h window closed — use Gmail or a template' : undefined}
             >
               <ChannelIcon channel={ch} />
               <span>{channelLabelShort(ch)}</span>

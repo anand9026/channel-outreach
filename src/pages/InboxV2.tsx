@@ -29,6 +29,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CampaignInboxRow } from '../components/inbox/CampaignInboxRow'
 import { ChannelStripeTimeline } from '../components/inbox/ChannelStripeTimeline'
+import { UnifiedMessageTimeline } from '../components/inbox/UnifiedMessageTimeline'
 import { InboxFilterDrawer } from '../components/inbox/InboxFilterDrawer'
 import { AiSuggestReply } from '../components/inbox/AiSuggestReply'
 import { EmailMessageBody } from '../components/inbox/EmailMessageBody'
@@ -586,12 +587,14 @@ function MessageBubble({
   msg,
   channel,
   showChannelChip,
+  compactEmail,
   onReact,
   onRemoveReaction,
 }: {
   msg: Message
   channel: OutreachChannel
   showChannelChip?: boolean
+  compactEmail?: boolean
   onReact: (msgId: string, emoji: string) => void
   onRemoveReaction: (msgId: string) => void
 }) {
@@ -616,6 +619,7 @@ function MessageBubble({
         {channel === 'email' ? (
           <div className="rx-msg rx-msg-email" data-channel={channel}>
             <EmailMessageBody
+              compact={compactEmail}
               subject={msg.subject}
               from={msg.emailFrom}
               to={msg.emailTo}
@@ -728,9 +732,23 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
   const [replyChannel, setReplyChannel] = useState<OutreachChannel>(
     conv.channels?.includes('whatsapp') ? 'whatsapp' : conv.channel,
   )
+
+  const waWindowOpen = actions.isWithin24hWindow(conv.id)
+  const hasEmailChannel = availableChannels.includes('email')
+
   useEffect(() => {
-    setReplyChannel(conv.channels?.includes('whatsapp') ? 'whatsapp' : conv.channel)
+    if (conv.channels?.includes('whatsapp')) {
+      setReplyChannel('whatsapp')
+    } else {
+      setReplyChannel(conv.channel)
+    }
   }, [conv.channel, conv.id, conv.channels])
+
+  // When WhatsApp 24h window is closed, default to Gmail if available.
+  useEffect(() => {
+    if (!canUnify || !hasEmailChannel) return
+    if (!waWindowOpen) setReplyChannel('email')
+  }, [conv.id, canUnify, hasEmailChannel, waWindowOpen])
 
   const messages = useMemo(() => {
     return state.messages
@@ -786,8 +804,13 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
     }
   }, [replyChannel, conv.id, messages])
 
-  const canReply = actions.canFreeformReply(activeConv.id)
-  const windowOpen = activeConv.channel === 'email' || actions.isWithin24hWindow(activeConv.id)
+  const canReply =
+    replyChannel === 'email'
+      ? hasEmailChannel
+      : replyChannel === 'whatsapp'
+        ? waWindowOpen
+        : actions.canFreeformReply(activeConv.id)
+  const windowOpen = activeConv.channel === 'email' || waWindowOpen
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
@@ -855,32 +878,22 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             {initials}
           </div>
           <div className="rx-thread-head-copy">
-            <div className="rx-thread-title">{displayName}</div>
-            <div className="rx-thread-campaign mono">{campaignTitle}</div>
-            <div className="rx-conv-channels rx-thread-channels">
-              {availableChannels.map((ch) => (
-                <span key={ch} className={`rx-channel-pill ${ch}`}>
-                  {channelLabelShort(ch)}
-                </span>
-              ))}
+            <div className="rx-thread-title-row">
+              <div className="rx-thread-title">{displayName}</div>
+              <span className="rx-thread-campaign-pill">{campaignTitle}</span>
             </div>
-            {contactLine ? (
-              <div className="rx-thread-contact mono">{contactLine}</div>
-            ) : null}
-            {(conv.labels || []).length > 0 ? (
-              <div className="rx-thread-label-glance">
-                {(conv.labels || []).slice(0, 2).map((l) => (
-                  <span key={l} className="rx-chip xs muted">
-                    <Tag size={9} /> {l}
+            <div className="rx-thread-subline">
+              <div className="rx-conv-channels rx-thread-channels">
+                {availableChannels.map((ch) => (
+                  <span key={ch} className={`rx-channel-pill ${ch}`}>
+                    {channelLabelShort(ch)}
                   </span>
                 ))}
-                {(conv.labels || []).length > 2 ? (
-                  <span className="rx-text-xs rx-muted">
-                    +{(conv.labels || []).length - 2} more
-                  </span>
-                ) : null}
               </div>
-            ) : null}
+              {contactLine ? (
+                <span className="rx-thread-contact-inline mono">{contactLine}</span>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -918,11 +931,6 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             onAddLabel={addLabel}
             onRemoveLabel={removeLabel}
           />
-          {conv.campaignIds.slice(0, 2).map((cid) => {
-            const c = state.campaigns.find((x) => x.id === cid)
-            if (!c) return null
-            return <span key={cid} className="rx-badge">{c.name}</span>
-          })}
           {conv.status === 'resolved' ? (
             <button className="rx-btn secondary sm" onClick={() => actions.reopenConversation(conv.id)}>
               Reopen
@@ -944,16 +952,40 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
           <div style={{ margin: 'auto', color: 'var(--text-3)' }}>
             {conv.isLive ? 'Waiting for messages to sync…' : 'No messages yet.'}
           </div>
-        ) : (
-          <ChannelStripeTimeline
+        ) : unified ? (
+          <UnifiedMessageTimeline
             messages={messages}
-            showStripes={(conv.channels?.length || 0) > 1 || unified}
             renderMessage={(m, msgChannel) => (
               <MessageBubble
                 key={m.id}
                 msg={m}
                 channel={msgChannel}
-                showChannelChip={unified && (conv.channels?.length || 0) > 1}
+                showChannelChip={(conv.channels?.length || 0) > 1}
+                compactEmail
+                onReact={(id, em) => {
+                  if (!canReact) {
+                    actions.toast(
+                      'Reactions on live WhatsApp threads need proxy support — UI ready.',
+                      'info',
+                    )
+                    return
+                  }
+                  actions.reactToMessage(id, em, 'me')
+                }}
+                onRemoveReaction={(id) => actions.removeReaction(id, 'me')}
+              />
+            )}
+          />
+        ) : (
+          <ChannelStripeTimeline
+            messages={messages}
+            showStripes={(conv.channels?.length || 0) > 1}
+            renderMessage={(m, msgChannel) => (
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                channel={msgChannel}
+                showChannelChip={(conv.channels?.length || 0) > 1}
                 onReact={(id, em) => {
                   if (!canReact) {
                     actions.toast(
@@ -984,6 +1016,7 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
               value={replyChannel}
               onChange={setReplyChannel}
               disabled={replying}
+              whatsappWindowOpen={waWindowOpen}
             />
           </div>
         )}
@@ -992,9 +1025,11 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             <span>
               {windowOpen
                 ? activeConv.isLive
-                  ? '● 24-hour reply window open · sending via WhatsApp Cloud API'
-                  : '● 24-hour reply window open'
-                : '● Window closed — use a template'}
+                  ? '24-hour WhatsApp window open'
+                  : '24-hour WhatsApp window open'
+                : hasEmailChannel
+                  ? 'WhatsApp window closed — reply on Gmail instead'
+                  : 'WhatsApp window closed — use a template'}
             </span>
           </div>
         )}
@@ -1130,10 +1165,12 @@ function Thread({ scopedCampaignId }: { scopedCampaignId: string }) {
             className="rx-textarea"
             placeholder={
               canReply
-                ? `Reply on ${channelLabelShort(activeConv.channel)}…`
-                : activeConv.channel === 'whatsapp'
-                  ? '24h window closed — use a template'
-                  : 'Reply unavailable'
+                ? `Message on ${channelLabelShort(activeConv.channel)}…`
+                : activeConv.channel === 'whatsapp' && hasEmailChannel
+                  ? 'Switch to Gmail to reply'
+                  : activeConv.channel === 'whatsapp'
+                    ? '24h window closed — use a template'
+                    : 'Reply unavailable'
             }
             rows={1}
             value={draft}
