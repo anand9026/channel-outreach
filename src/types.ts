@@ -288,6 +288,10 @@ export interface Conversation {
       }
     >
   >
+  /** SQL contact_name when available */
+  contactName?: string
+  /** True when tied to a catalog influencer / WA outreach (not cold Gmail noise) */
+  isCreator?: boolean
   /** Provider-side thread key (phone digits, Gmail thread id, etc.) */
   providerThreadId?: string
   /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */

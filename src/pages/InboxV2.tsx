@@ -20,7 +20,6 @@ import {
   Search,
   Send,
   Smile,
-  Square,
   Tag,
   Wifi,
   WifiOff,
@@ -28,12 +27,20 @@ import {
   Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ConversationListRow } from '../components/inbox/ConversationListRow'
+import {
+  channelLabelShort,
+  contactLineForConversation,
+  displayNameForConversation,
+  initialsForName,
+  isCreatorConversation,
+} from '../components/inbox/inbox-conversation-utils'
 import { EmojiPicker } from '../components/EmojiPicker'
 import { EmptyState } from '../components/EmptyState'
 import { IgIcon } from '../components/BrandIcons'
 import { whatsappMediaUrl, resolveOrgId } from '../lib/api'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
-import type { Conversation, Message, OutreachChannel } from '../types'
+import type { Conversation, Influencer, Message, OutreachChannel } from '../types'
 
 function formatSince(ts: string | null): string {
   if (!ts) return 'never'
@@ -59,6 +66,7 @@ const SUGGESTED_LABELS = [
 const REACTION_QUICKPICK = ['\u2764\uFE0F', '\u{1F44D}', '\u{1F44E}', '\u{1F602}', '\u{1F62E}', '\u{1F525}']
 
 type SavedView =
+  | 'creators'
   | 'all'
   | 'unread'
   | 'hot'
@@ -67,7 +75,8 @@ type SavedView =
   | 'live'
 
 const savedViewDefs: Array<{ id: SavedView; label: string; icon: typeof Bookmark }> = [
-  { id: 'all', label: 'All', icon: InboxIcon },
+  { id: 'creators', label: 'Creators', icon: MessageCircle },
+  { id: 'all', label: 'All mail', icon: InboxIcon },
   { id: 'unread', label: 'Unread', icon: Bell },
   { id: 'hot', label: 'Hot leads', icon: Flame },
   { id: 'unanswered_24h', label: 'Unanswered 24h', icon: AlertTriangle },
@@ -75,8 +84,15 @@ const savedViewDefs: Array<{ id: SavedView; label: string; icon: typeof Bookmark
   { id: 'live', label: 'Live only', icon: Wifi },
 ]
 
-function passesSavedView(c: Conversation, view: SavedView, messagesForConv: Message[]): boolean {
+function passesSavedView(
+  c: Conversation,
+  view: SavedView,
+  messagesForConv: Message[],
+  inf?: Influencer,
+): boolean {
   switch (view) {
+    case 'creators':
+      return isCreatorConversation(c, inf)
     case 'unread':
       return c.unreadCount > 0
     case 'hot':
@@ -101,24 +117,12 @@ function passesSavedView(c: Conversation, view: SavedView, messagesForConv: Mess
   }
 }
 
-function channelBadgeLetter(ch: OutreachChannel) {
-  if (ch === 'whatsapp') return 'W'
-  if (ch === 'instagram') return 'I'
-  return 'E'
-}
-
-function channelLabelShort(ch: OutreachChannel) {
-  if (ch === 'whatsapp') return 'WhatsApp'
-  if (ch === 'instagram') return 'Instagram'
-  return 'Gmail'
-}
-
 export function InboxV2() {
   const { state, actions } = useWhatsAppStore()
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState<'all' | OutreachChannel>('all')
   const [labelFilter, setLabelFilter] = useState<string | null>(null)
-  const [savedView, setSavedView] = useState<SavedView>('all')
+  const [savedView, setSavedView] = useState<SavedView>('creators')
   const [syncing, setSyncing] = useState(false)
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
@@ -154,9 +158,10 @@ export function InboxV2() {
         return chs.includes(tab)
       })
       .filter((c) => (labelFilter ? (c.labels || []).includes(labelFilter) : true))
-      .filter((c) =>
-        passesSavedView(c, savedView, messagesByConv.get(c.id) || []),
-      )
+      .filter((c) => {
+        const inf = state.influencers.find((i) => i.id === c.influencerId)
+        return passesSavedView(c, savedView, messagesByConv.get(c.id) || [], inf)
+      })
       .filter((c) => {
         if (!search) return true
         const inf = state.influencers.find((i) => i.id === c.influencerId)
@@ -214,7 +219,7 @@ export function InboxV2() {
           <div>
             <h1 className="rx-page-title">Inbox</h1>
             <p className="rx-page-sub">
-              Every reply from every channel, unified per creator. Campaign context stays with the chat.
+              One conversation per creator — WhatsApp, Gmail, and more in a single thread.
             </p>
           </div>
           <div className="rx-row" style={{ gap: 8 }}>
@@ -403,93 +408,31 @@ export function InboxV2() {
           {conversations.length === 0 ? (
             <div style={{ padding: 32 }}>
               <EmptyState
-                title="No conversations match"
-                body="Try switching the saved view or clearing filters."
+                title={savedView === 'creators' ? 'No creator conversations yet' : 'No conversations match'}
+                body={
+                  savedView === 'creators'
+                    ? 'Send a campaign or Quick Send to start a thread. Switch to All mail to see synced Gmail.'
+                    : 'Try switching the saved view or clearing filters.'
+                }
               />
             </div>
           ) : (
             conversations.map((c) => {
               const inf = state.influencers.find((i) => i.id === c.influencerId)
-              const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
-              const isSelected = selection.has(c.id)
-              const channelList = c.channels?.length ? c.channels : [c.channel]
-              const contactBits = [
-                inf?.phone ? `+${inf.phone.replace(/^\+/, '')}` : '',
-                inf?.email || '',
-              ].filter(Boolean)
               return (
-                <div
+                <ConversationListRow
                   key={c.id}
-                  className={`rx-conv${state.selectedConversationId === c.id ? ' is-selected' : ''}`}
-                  data-testid={`conv-${c.id}`}
-                  data-channel={c.channel}
-                  onClick={() => {
+                  conversation={c}
+                  influencer={inf}
+                  selected={state.selectedConversationId === c.id}
+                  selectMode={selectMode}
+                  checked={selection.has(c.id)}
+                  onSelect={() => {
                     if (selectMode) toggleSelected(c.id)
                     else actions.selectConversation(c.id)
                   }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  {selectMode ? (
-                    <button
-                      type="button"
-                      className="rx-check"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleSelected(c.id)
-                      }}
-                      aria-label={isSelected ? 'Deselect' : 'Select'}
-                    >
-                      {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                    </button>
-                  ) : (
-                    <div className="rx-conv-avatar">
-                      {initials}
-                      <div className="rx-conv-badges">
-                        {channelList.map((ch) => (
-                          <span key={ch} className={`rx-conv-badge ${ch}`} title={channelLabelShort(ch)}>
-                            {channelBadgeLetter(ch)}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="rx-conv-body">
-                    <div className="rx-conv-row">
-                      <div className="rx-conv-name">
-                        {inf?.name || 'Unknown'}
-                        {c.isLive ? (
-                          <span className="rx-live-tag mono" title="Live from the Cloud API">LIVE</span>
-                        ) : null}
-                        {c.outreachConversationId ? (
-                          <span className="rx-sql-tag mono" title="Unified SQL conversation">SQL</span>
-                        ) : null}
-                      </div>
-                      <div className="rx-conv-time">
-                        {new Date(c.lastMessageAt).toLocaleDateString('en', {
-                          month: 'short',
-                          day: 'numeric',
-                        })}
-                      </div>
-                    </div>
-                    {contactBits.length > 0 ? (
-                      <div className="rx-text-xs rx-muted mono rx-conv-contact">{contactBits.join(' · ')}</div>
-                    ) : null}
-                    <div className="rx-conv-row">
-                      <div className="rx-conv-preview">{c.lastPreview || '—'}</div>
-                      {c.unreadCount > 0 ? (
-                        <span className="rx-unread-pill">{c.unreadCount}</span>
-                      ) : null}
-                    </div>
-                    {c.labels && c.labels.length > 0 && (
-                      <div className="rx-conv-labels">
-                        {c.labels.map((l) => (
-                          <span key={l} className="rx-chip xs"><Tag size={9} /> {l}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  onToggleCheck={() => toggleSelected(c.id)}
+                />
               )
             })
           )}
@@ -760,44 +703,34 @@ function Thread() {
     actions.setConversationLabels(conv.id, (conv.labels || []).filter((x) => x !== l))
   }
 
-  const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
+  const displayName = displayNameForConversation(conv, inf)
+  const initials = initialsForName(displayName)
+  const contactLine = contactLineForConversation(conv, inf)
   const canReact = !activeConv.isLive || activeConv.channel !== 'whatsapp'
-  const handle = inf?.handle?.startsWith('@') ? inf.handle : inf?.handle ? `@${inf.handle}` : ''
 
   return (
     <div className="rx-thread" data-channel={unified ? 'unified' : conv.channel}>
       <div className="rx-thread-head">
         <div className="rx-thread-head-left">
-          <div className="rx-conv-avatar" style={{ width: 40, height: 40 }}>
+          <div className={`rx-conv-avatar rx-thread-avatar${canUnify ? ' is-multi' : ''}`}>
             {initials}
-            <div className="rx-conv-badges">
+          </div>
+          <div className="rx-thread-head-copy">
+            <div className="rx-thread-title">{displayName}</div>
+            <div className="rx-conv-channels rx-thread-channels">
               {availableChannels.map((ch) => (
-                <span key={ch} className={`rx-conv-badge ${ch}`} title={channelLabelShort(ch)}>
-                  {channelBadgeLetter(ch)}
+                <span key={ch} className={`rx-channel-pill ${ch}`}>
+                  {channelLabelShort(ch)}
                 </span>
               ))}
             </div>
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14.5, letterSpacing: '-0.01em' }}>
-              {inf?.name}
-              {conv.isLive ? <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>LIVE</span> : null}
-              {conv.outreachConversationId ? (
-                <span className="rx-sql-tag mono" style={{ marginLeft: 6 }} title="Unified SQL conversation">SQL</span>
-              ) : null}
-            </div>
-            <div className="rx-text-xs rx-muted mono">
-              {unified
-                ? [inf?.phone && `+${inf.phone.replace(/^\+/, '')}`, inf?.email].filter(Boolean).join(' · ') ||
-                  `${availableChannels.length} channels · ${availableChannels.map(channelLabelShort).join(' · ')}`
-                : conv.channel === 'whatsapp' ? (inf?.phone ? `+${inf.phone.replace(/^\+/, '')}` : '')
-                : conv.channel === 'instagram' ? (handle || 'no handle')
-                : inf?.email}
-            </div>
+            {contactLine ? (
+              <div className="rx-thread-contact mono">{contactLine}</div>
+            ) : null}
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {canUnify && (
+          {canUnify && !conv.outreachConversationId ? (
             <div className="rx-seg sm" role="tablist" aria-label="Thread view mode" data-testid="unified-toggle">
               <button
                 type="button"
@@ -821,7 +754,7 @@ function Thread() {
                 Unified
               </button>
             </div>
-          )}
+          ) : null}
           {(conv.labels || []).map((l) => (
             <span key={l} className="rx-chip xs">
               <Tag size={9} /> {l}

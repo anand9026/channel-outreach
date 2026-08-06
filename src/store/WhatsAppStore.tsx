@@ -1929,32 +1929,59 @@ function reducer(state: AppState, action: Action): AppState {
         }
 
         let inf = findInfluencerForConversation(influencers, row)
+        const phone = normPhone(row.primary_phone || '')
+        const email = (row.primary_email || '').toLowerCase()
+        const contactRaw = (row.contact_name || '').trim()
+        const isCreator = Boolean(
+          row.influencer_id ||
+            phone ||
+            channelList.includes('whatsapp'),
+        )
+
+        function prettyName(): string {
+          if (contactRaw && !contactRaw.includes('@')) return contactRaw
+          if (email.includes('@')) {
+            const local = email.split('@')[0] || ''
+            const pretty = local
+              .replace(/[._+-]+/g, ' ')
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join(' ')
+            if (pretty.length >= 2) return pretty
+          }
+          if (phone) return `+${phone.replace(/^\+/, '')}`
+          return 'Unknown contact'
+        }
+
         if (!inf) {
-          const phone = normPhone(row.primary_phone || '')
-          const email = (row.primary_email || '').toLowerCase()
           inf = {
             id:
               row.influencer_id ||
-              (email ? `ext_em_${email.replace(/[^a-z0-9]/g, '_')}` : `ext_${phone || row.outreach_conversation_id}`),
-            name:
-              (row.contact_name && row.contact_name.trim()) ||
-              email.split('@')[0] ||
-              phone ||
-              'Contact',
+              (email
+                ? `ext_em_${email.replace(/[^a-z0-9]/g, '_')}`
+                : `ext_${phone || row.outreach_conversation_id}`),
+            name: prettyName(),
             handle: '',
             phone: phone || '',
             email: email || '',
             followers: '—',
-            niche: 'Outreach',
+            niche: isCreator ? 'Outreach' : 'External',
           }
           influencers = [...influencers, inf]
         } else if (row.influencer_id && inf.id.startsWith('ext_')) {
-          inf = { ...inf, id: row.influencer_id }
-          influencers = influencers.map((i) => (i.id === inf!.id || phonesMatch(i.phone, inf!.phone) ? inf! : i))
+          inf = { ...inf, id: row.influencer_id, name: prettyName() }
+          influencers = influencers.map((i) =>
+            i.id === inf!.id || phonesMatch(i.phone, inf!.phone) ? inf! : i,
+          )
         }
 
         const lastAt = row.last_message_at || nowIso()
-        const preview = (row.last_preview || '').slice(0, 80)
+        const preview = String(row.last_preview || '')
+          .replace(/[\u200B-\u200D\uFEFF\u034F]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 140)
         const waThread = channelThreads.whatsapp
         const emailThread = channelThreads.email
 
@@ -1977,6 +2004,8 @@ function reducer(state: AppState, action: Action): AppState {
           gmailThreadId: emailThread?.gmailThreadId,
           channels: channelList,
           channelThreads,
+          contactName: contactRaw || undefined,
+          isCreator,
         }
 
         const existing = conversations.find((c) => c.id === convId)
