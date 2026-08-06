@@ -41,6 +41,8 @@ import {
   listOutreachChannels,
   listOutreachCollections,
   listOutreachCollectionInfluencers,
+  listOutreachConversationMessages,
+  listOutreachConversations,
   listOutreachTemplates,
   listOutreachThreadMessages,
   listOutreachThreads,
@@ -60,6 +62,7 @@ import {
   type OutreachChannelRow,
   type OutreachCollectionRow,
   type OutreachCollectionInfluencerRow,
+  type OutreachConversationRow,
   type OutreachMessageRow,
   type OutreachTemplateRow,
   type OutreachMessageAttachment,
@@ -251,7 +254,7 @@ type Action =
   | { type: 'RELEASE_SCHEDULED'; messageId: string }
   | { type: 'ADVANCE_MESSAGE_STATUS'; messageId: string; status: DeliveryStatus }
   | { type: 'SIMULATE_INBOUND'; conversationId: string; body: string }
-  | { type: 'SEND_REPLY'; conversationId: string; body: string; msgId?: string }
+  | { type: 'SEND_REPLY'; conversationId: string; body: string; msgId?: string; channel?: OutreachChannel }
   | { type: 'ASSIGN_CONVERSATION'; conversationId: string; memberId: string | undefined }
   | { type: 'RESOLVE_CONVERSATION'; conversationId: string }
   | { type: 'REOPEN_CONVERSATION'; conversationId: string }
@@ -292,6 +295,7 @@ type Action =
   | { type: 'SET_LIVE_CONNECTION'; connection: ConnectionInfo | null }
   | { type: 'MERGE_INBOX_THREADS'; threads: ApiInboxThread[] }
   | { type: 'MERGE_OUTREACH_THREADS'; threads: OutreachThreadRow[] }
+  | { type: 'MERGE_OUTREACH_CONVERSATIONS'; conversations: OutreachConversationRow[] }
   | {
       type: 'MERGE_OUTREACH_SQL_MESSAGES'
       payload: {
@@ -545,6 +549,65 @@ function sqlConversationId(threadId: string) {
   return `sql_${threadId}`
 }
 
+function sqlUnifiedConversationId(outreachConversationId: string) {
+  return `conv_${outreachConversationId}`
+}
+
+function phonesMatch(a: string, b: string): boolean {
+  const pa = normPhone(a)
+  const pb = normPhone(b)
+  if (!pa || !pb) return false
+  if (pa === pb) return true
+  if (pa.length >= 10 && pb.length >= 10 && pa.slice(-10) === pb.slice(-10)) return true
+  return false
+}
+
+function findInfluencerForConversation(
+  influencers: Influencer[],
+  row: OutreachConversationRow,
+): Influencer | undefined {
+  if (row.influencer_id) {
+    const byId = influencers.find((i) => i.id === row.influencer_id)
+    if (byId) return byId
+  }
+  const phone = normPhone(row.primary_phone || '')
+  if (phone) {
+    const byPhone = influencers.find((i) => phonesMatch(i.phone, phone))
+    if (byPhone) return byPhone
+  }
+  const email = (row.primary_email || '').toLowerCase()
+  if (email) {
+    const byEmail = influencers.find((i) => (i.email || '').toLowerCase() === email)
+    if (byEmail) return byEmail
+  }
+  return undefined
+}
+
+function buildChannelThreadsFromSql(
+  threads: OutreachThreadRow[],
+  defaultPnid?: string,
+  gmailAccId?: string,
+): NonNullable<Conversation['channelThreads']> {
+  const out: NonNullable<Conversation['channelThreads']> = {}
+  for (const t of threads) {
+    const ch = mapOutreachMedium(t.medium)
+    out[ch] = {
+      outreachThreadId: t.outreach_thread_id,
+      providerThreadId: t.provider_thread_id,
+      gmailThreadId: ch === 'email' ? t.provider_thread_id : undefined,
+      phoneNumberId: ch === 'whatsapp' ? defaultPnid : undefined,
+      emailAccountId: ch === 'email' ? gmailAccId : undefined,
+    }
+  }
+  return out
+}
+
+function mapSqlMessageChannel(m: OutreachMessageRow, fallback: OutreachChannel): OutreachChannel {
+  const raw = m.thread_medium || m.medium
+  if (!raw) return fallback
+  return mapOutreachMedium(String(raw))
+}
+
 function mapOutreachMedium(medium: string): OutreachChannel {
   if (medium === 'gmail') return 'email'
   if (medium === 'instagram') return 'instagram'
@@ -557,7 +620,10 @@ function findInfluencerByPhone(
 ): Influencer | undefined {
   if (!phoneDigits) return undefined
   return influencers.find(
-    (i) => normPhone(i.phone) === phoneDigits || i.id === `ext_${phoneDigits}`,
+    (i) =>
+      phonesMatch(i.phone, phoneDigits) ||
+      i.id === `ext_${phoneDigits}` ||
+      i.id === `ext_${normPhone(phoneDigits)}`,
   )
 }
 
@@ -1474,7 +1540,8 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SEND_REPLY': {
       const conv = state.conversations.find((c) => c.id === action.conversationId)
       if (!conv) return state
-      if (conv.channel === 'whatsapp' || conv.channel === 'instagram') {
+      const replyChannel = action.channel || conv.channel
+      if (replyChannel === 'whatsapp' || replyChannel === 'instagram') {
         if (!conv.lastInboundAt) return state
         if (Date.now() - new Date(conv.lastInboundAt).getTime() >= 24 * 60 * 60 * 1000) {
           return state
@@ -1485,16 +1552,16 @@ function reducer(state: AppState, action: Action): AppState {
         id: action.msgId ?? uid('msg'),
         conversationId: conv.id,
         organizationId: resolveOrgId(),
-        channel: conv.channel,
+        channel: replyChannel,
         direction: 'outbound',
         body: action.body,
         status: 'sent',
         isTemplate: false,
         createdAt: ts,
         metaMessageId:
-          conv.channel === 'whatsapp'
+          replyChannel === 'whatsapp'
             ? `wamid.${uid('meta')}`
-            : conv.channel === 'instagram'
+            : replyChannel === 'instagram'
               ? `ig.${uid('meta')}`
               : `email.${uid('out')}`,
       }
@@ -1834,6 +1901,120 @@ function reducer(state: AppState, action: Action): AppState {
         liveInbox: { ...state.liveInbox, connection: conn },
       }
     }
+    case 'MERGE_OUTREACH_CONVERSATIONS': {
+      const rows = action.conversations || []
+      if (rows.length === 0) return state
+
+      const defaultPnid = state.liveInbox.connection?.phone_number_id ?? undefined
+      const gmailAcc = state.emailAccounts.find((a) => a.provider === 'gmail')
+      let influencers = [...state.influencers]
+      let conversations = [...state.conversations]
+
+      const mergedThreadIds = new Set<string>()
+
+      for (const row of rows) {
+        const convId = sqlUnifiedConversationId(row.outreach_conversation_id)
+        const channelThreads = buildChannelThreadsFromSql(
+          row.threads || [],
+          defaultPnid,
+          gmailAcc?.id,
+        )
+        const channelList = (row.channels || [])
+          .map((m) => mapOutreachMedium(m))
+          .filter((c, i, arr) => arr.indexOf(c) === i)
+        const primaryChannel = channelList[0] || 'whatsapp'
+
+        for (const t of row.threads || []) {
+          mergedThreadIds.add(t.outreach_thread_id)
+        }
+
+        let inf = findInfluencerForConversation(influencers, row)
+        if (!inf) {
+          const phone = normPhone(row.primary_phone || '')
+          const email = (row.primary_email || '').toLowerCase()
+          inf = {
+            id:
+              row.influencer_id ||
+              (email ? `ext_em_${email.replace(/[^a-z0-9]/g, '_')}` : `ext_${phone || row.outreach_conversation_id}`),
+            name:
+              (row.contact_name && row.contact_name.trim()) ||
+              email.split('@')[0] ||
+              phone ||
+              'Contact',
+            handle: '',
+            phone: phone || '',
+            email: email || '',
+            followers: '—',
+            niche: 'Outreach',
+          }
+          influencers = [...influencers, inf]
+        } else if (row.influencer_id && inf.id.startsWith('ext_')) {
+          inf = { ...inf, id: row.influencer_id }
+          influencers = influencers.map((i) => (i.id === inf!.id || phonesMatch(i.phone, inf!.phone) ? inf! : i))
+        }
+
+        const lastAt = row.last_message_at || nowIso()
+        const preview = (row.last_preview || '').slice(0, 80)
+        const waThread = channelThreads.whatsapp
+        const emailThread = channelThreads.email
+
+        const payload: Conversation = {
+          id: convId,
+          organizationId: resolveOrgId(),
+          channel: primaryChannel,
+          phoneNumberId: waThread?.phoneNumberId,
+          emailAccountId: emailThread?.emailAccountId,
+          influencerId: inf.id,
+          campaignIds: [],
+          status: 'open',
+          lastMessageAt: lastAt,
+          unreadCount: row.unread_count || 0,
+          lastPreview: preview,
+          isLive: true,
+          outreachConversationId: row.outreach_conversation_id,
+          outreachThreadId: waThread?.outreachThreadId || emailThread?.outreachThreadId,
+          providerThreadId: waThread?.providerThreadId || emailThread?.providerThreadId,
+          gmailThreadId: emailThread?.gmailThreadId,
+          channels: channelList,
+          channelThreads,
+        }
+
+        const existing = conversations.find((c) => c.id === convId)
+        if (!existing) {
+          conversations = [payload, ...conversations]
+        } else {
+          conversations = conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  ...payload,
+                  labels: c.labels,
+                  campaignIds: c.campaignIds.length ? c.campaignIds : payload.campaignIds,
+                }
+              : c,
+          )
+        }
+      }
+
+      // Drop legacy per-thread rows replaced by unified conversation entries
+      conversations = conversations.filter((c) => {
+        if (c.outreachConversationId && c.id.startsWith('conv_')) return true
+        if (c.outreachThreadId && mergedThreadIds.has(c.outreachThreadId)) return false
+        if (c.id.startsWith('sql_')) {
+          const tid = c.id.slice(4)
+          if (mergedThreadIds.has(tid)) return false
+        }
+        return true
+      })
+
+      return {
+        ...state,
+        influencers,
+        conversations: conversations.sort((a, b) =>
+          b.lastMessageAt.localeCompare(a.lastMessageAt),
+        ),
+      }
+    }
     case 'MERGE_OUTREACH_THREADS': {
       const threads = action.threads || []
       if (threads.length === 0) return state
@@ -1973,7 +2154,7 @@ function reducer(state: AppState, action: Action): AppState {
           id: uid('msg'),
           conversationId,
           organizationId: resolveOrgId(),
-          channel: conv.channel,
+          channel: mapSqlMessageChannel(m, conv.channel),
           direction,
           subject: m.subject || undefined,
           body:
@@ -2772,12 +2953,17 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
   const doLiveSync = useCallback(async () => {
     const orgId = resolveOrgId()
     try {
-      const sqlThreads = await listOutreachThreads({ org_id: orgId, limit: 200 })
-      if (sqlThreads.length > 0) {
-        dispatch({ type: 'MERGE_OUTREACH_THREADS', threads: sqlThreads })
+      const sqlConversations = await listOutreachConversations({ org_id: orgId, limit: 200 })
+      if (sqlConversations.length > 0) {
+        dispatch({ type: 'MERGE_OUTREACH_CONVERSATIONS', conversations: sqlConversations })
       } else {
-        const threads = await listWhatsAppInbox(orgId)
-        dispatch({ type: 'MERGE_INBOX_THREADS', threads })
+        const sqlThreads = await listOutreachThreads({ org_id: orgId, limit: 200 })
+        if (sqlThreads.length > 0) {
+          dispatch({ type: 'MERGE_OUTREACH_THREADS', threads: sqlThreads })
+        } else {
+          const threads = await listWhatsAppInbox(orgId)
+          dispatch({ type: 'MERGE_INBOX_THREADS', threads })
+        }
       }
 
       const cur = stateRef.current
@@ -2785,7 +2971,48 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         (c) => c.id === cur.selectedConversationId,
       )
 
-      if (sel?.outreachThreadId) {
+      if (sel?.outreachConversationId) {
+        try {
+          const em = cur.emailAccounts.find(
+            (a) => a.provider === 'gmail' && a.userId,
+          )
+          const emailThreadId = sel.channelThreads?.email?.gmailThreadId || sel.gmailThreadId
+          if (em?.userId && emailThreadId) {
+            try {
+              await getGmailThread({
+                thread_id: emailThreadId,
+                user_id: em.userId,
+              })
+            } catch {
+              /* gmail ingest is best-effort */
+            }
+          }
+
+          const msgs = await listOutreachConversationMessages({
+            outreach_conversation_id: sel.outreachConversationId,
+            limit: 500,
+          })
+          dispatch({
+            type: 'MERGE_OUTREACH_SQL_MESSAGES',
+            payload: { conversationId: sel.id, messages: msgs },
+          })
+
+          const waThread = sel.channelThreads?.whatsapp
+          if (waThread) {
+            const inf = cur.influencers.find((i) => i.id === sel.influencerId)
+            const phoneDigits = normPhone(inf?.phone || waThread.providerThreadId || '')
+            if (phoneDigits) {
+              try {
+                await getWhatsAppInboxMessages(phoneDigits, orgId)
+              } catch {
+                /* mark-read side effect only */
+              }
+            }
+          }
+        } catch {
+          /* per-conversation errors are non-fatal */
+        }
+      } else if (sel?.outreachThreadId) {
         try {
           const msgs = await listOutreachThreadMessages({
             outreach_thread_id: sel.outreachThreadId,
@@ -3031,17 +3258,20 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       const inf = stateRef.current.influencers.find(
         (i) => i.id === conv.influencerId,
       )
-      const phoneDigits = normPhone(inf?.phone || '')
+      const phoneDigits = normPhone(
+        inf?.phone || conv.channelThreads?.whatsapp?.providerThreadId || '',
+      )
       if (!phoneDigits) return false
       if (!canFreeformReply(conversationId)) return false
       const msgId = uid('msg')
       // Optimistic local send
-      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId })
+      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId, channel: 'whatsapp' })
       try {
         await sendWhatsAppText({
           to: phoneDigits,
           text: body,
-          phone_number_id: conv.phoneNumberId,
+          phone_number_id:
+            conv.channelThreads?.whatsapp?.phoneNumberId || conv.phoneNumberId,
           org_id: resolveOrgId(),
         })
         // Trigger a fresh pull so we get delivery/read receipts sooner
@@ -3074,9 +3304,17 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       const conv = stateRef.current.conversations.find(
         (c) => c.id === conversationId,
       )
-      if (!conv || conv.channel !== 'email') return false
+      if (!conv) return false
+      const hasEmail =
+        conv.channel === 'email' ||
+        conv.channels?.includes('email') ||
+        Boolean(conv.channelThreads?.email)
+      if (!hasEmail) return false
       const em = stateRef.current.emailAccounts.find(
-        (a) => a.id === conv.emailAccountId || a.provider === 'gmail',
+        (a) =>
+          a.id === conv.channelThreads?.email?.emailAccountId ||
+          a.id === conv.emailAccountId ||
+          a.provider === 'gmail',
       )
       const inf = stateRef.current.influencers.find(
         (i) => i.id === conv.influencerId,
@@ -3105,14 +3343,15 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         : 'Re: your message'
 
       const msgId = uid('msg')
-      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId })
+      dispatch({ type: 'SEND_REPLY', conversationId, body, msgId, channel: 'email' })
       try {
         await sendGmailMessage({
           to,
           subject,
           body,
           text_body: body,
-          thread_id: conv.gmailThreadId,
+          thread_id:
+            conv.channelThreads?.email?.gmailThreadId || conv.gmailThreadId,
           user_id: em.userId,
         })
         void doLiveSync()

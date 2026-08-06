@@ -617,6 +617,8 @@ export type OutreachMessageRow = {
   outreach_message_id: string
   org_id: string
   outreach_thread_id: string
+  thread_medium?: string
+  medium?: string
   direction: 'inbound' | 'outbound'
   message_type?: string
   text_body?: string | null
@@ -694,6 +696,7 @@ export type OutreachThreadRow = {
   outreach_conversation_id: string
   medium: 'whatsapp' | 'gmail' | 'instagram'
   provider_thread_id: string
+  influencer_id?: string | null
   contact_name?: string | null
   contact_email?: string | null
   contact_phone?: string | null
@@ -703,6 +706,20 @@ export type OutreachThreadRow = {
   unread_count: number
   last_message_at?: string | null
   last_inbound_at?: string | null
+}
+
+export type OutreachConversationRow = {
+  outreach_conversation_id: string
+  org_id: string
+  influencer_id?: string | null
+  contact_name?: string | null
+  primary_phone?: string | null
+  primary_email?: string | null
+  last_message_at?: string | null
+  last_preview?: string | null
+  unread_count: number
+  channels: string[]
+  threads: OutreachThreadRow[]
 }
 
 export async function listOutreachChannels(input?: {
@@ -975,6 +992,34 @@ export async function listOutreachThreads(input?: {
     `/outreach/threads?${q.toString()}`,
   )
   return res.data?.threads ?? []
+}
+
+export async function listOutreachConversations(input?: {
+  org_id?: string
+  medium?: string
+  limit?: number
+}) {
+  const q = withOrgParams({ org_id: input?.org_id })
+  if (input?.medium) q.set('medium', input.medium)
+  if (input?.limit) q.set('limit', String(input.limit))
+  const res = await request<ApiSuccess<{ conversations?: OutreachConversationRow[] }>>(
+    `/outreach/conversations?${q.toString()}`,
+  )
+  return res.data?.conversations ?? []
+}
+
+export async function listOutreachConversationMessages(input: {
+  outreach_conversation_id: string
+  org_id?: string
+  limit?: number
+}) {
+  const q = withOrgParams({ org_id: input.org_id })
+  q.set('outreach_conversation_id', input.outreach_conversation_id)
+  if (input.limit) q.set('limit', String(input.limit))
+  const res = await request<ApiSuccess<{ messages?: OutreachMessageRow[] }>>(
+    `/outreach/conversations/messages?${q.toString()}`,
+  )
+  return res.data?.messages ?? []
 }
 
 export async function createOutreachThreadLink(input: {

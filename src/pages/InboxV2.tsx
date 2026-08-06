@@ -148,7 +148,11 @@ export function InboxV2() {
 
   const conversations = useMemo(() => {
     return state.conversations
-      .filter((c) => (tab === 'all' ? true : c.channel === tab))
+      .filter((c) => {
+        if (tab === 'all') return true
+        const chs = c.channels?.length ? c.channels : [c.channel]
+        return chs.includes(tab)
+      })
       .filter((c) => (labelFilter ? (c.labels || []).includes(labelFilter) : true))
       .filter((c) =>
         passesSavedView(c, savedView, messagesByConv.get(c.id) || []),
@@ -408,6 +412,11 @@ export function InboxV2() {
               const inf = state.influencers.find((i) => i.id === c.influencerId)
               const initials = inf?.name.split(' ').map((x) => x[0]).slice(0, 2).join('') || '?'
               const isSelected = selection.has(c.id)
+              const channelList = c.channels?.length ? c.channels : [c.channel]
+              const contactBits = [
+                inf?.phone ? `+${inf.phone.replace(/^\+/, '')}` : '',
+                inf?.email || '',
+              ].filter(Boolean)
               return (
                 <div
                   key={c.id}
@@ -436,9 +445,13 @@ export function InboxV2() {
                   ) : (
                     <div className="rx-conv-avatar">
                       {initials}
-                      <span className={`rx-conv-badge ${c.channel}`}>
-                        {channelBadgeLetter(c.channel)}
-                      </span>
+                      <div className="rx-conv-badges">
+                        {channelList.map((ch) => (
+                          <span key={ch} className={`rx-conv-badge ${ch}`} title={channelLabelShort(ch)}>
+                            {channelBadgeLetter(ch)}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                   <div className="rx-conv-body">
@@ -448,8 +461,8 @@ export function InboxV2() {
                         {c.isLive ? (
                           <span className="rx-live-tag mono" title="Live from the Cloud API">LIVE</span>
                         ) : null}
-                        {c.outreachThreadId ? (
-                          <span className="rx-sql-tag mono" title={`SQL thread ${c.outreachThreadId}`}>SQL</span>
+                        {c.outreachConversationId ? (
+                          <span className="rx-sql-tag mono" title="Unified SQL conversation">SQL</span>
                         ) : null}
                       </div>
                       <div className="rx-conv-time">
@@ -459,6 +472,9 @@ export function InboxV2() {
                         })}
                       </div>
                     </div>
+                    {contactBits.length > 0 ? (
+                      <div className="rx-text-xs rx-muted mono rx-conv-contact">{contactBits.join(' · ')}</div>
+                    ) : null}
                     <div className="rx-conv-row">
                       <div className="rx-conv-preview">{c.lastPreview || '—'}</div>
                       {c.unreadCount > 0 ? (
@@ -632,55 +648,54 @@ function Thread() {
   const conv = state.conversations.find((c) => c.id === state.selectedConversationId)!
   const inf = state.influencers.find((i) => i.id === conv.influencerId)
 
-  // Sibling conversations — same influencer on other channels (WA / IG / Gmail).
-  const siblings = useMemo(
-    () => state.conversations.filter((c) => c.influencerId === conv.influencerId),
-    [state.conversations, conv.influencerId],
-  )
+  // Unified conversation — one row per person; channel threads live under channelThreads.
+  const siblings = useMemo(() => {
+    if (conv.outreachConversationId) return [conv]
+    return state.conversations.filter((c) => c.influencerId === conv.influencerId)
+  }, [state.conversations, conv])
   const availableChannels = useMemo(() => {
+    if (conv.channels?.length) return conv.channels
     const set = new Set<OutreachChannel>()
     for (const s of siblings) set.add(s.channel)
     return Array.from(set)
-  }, [siblings])
+  }, [conv.channels, siblings])
   const canUnify = availableChannels.length >= 2
 
-  // Unified toggle (per-thread, defaults to single so nothing breaks).
-  const [unified, setUnified] = useState(false)
+  const [unified, setUnified] = useState(canUnify)
   useEffect(() => {
-    // Reset when switching to a thread that can't unify.
-    if (!canUnify && unified) setUnified(false)
-  }, [canUnify, unified])
+    if (canUnify) setUnified(true)
+    else if (!canUnify && unified) setUnified(false)
+  }, [canUnify, conv.id])
 
-  // Which channel the composer will reply on (unified mode only).
-  const [replyChannel, setReplyChannel] = useState<OutreachChannel>(conv.channel)
+  const [replyChannel, setReplyChannel] = useState<OutreachChannel>(
+    conv.channels?.includes('whatsapp') ? 'whatsapp' : conv.channel,
+  )
   useEffect(() => {
-    setReplyChannel(conv.channel)
-  }, [conv.channel, conv.id])
-
-  // Map from conversationId → channel for bubble decoration in unified view.
-  const convChannelById = useMemo(() => {
-    const map = new Map<string, OutreachChannel>()
-    for (const c of siblings) map.set(c.id, c.channel)
-    return map
-  }, [siblings])
+    setReplyChannel(conv.channels?.includes('whatsapp') ? 'whatsapp' : conv.channel)
+  }, [conv.channel, conv.id, conv.channels])
 
   const messages = useMemo(() => {
-    if (unified) {
-      const siblingIds = new Set(siblings.map((s) => s.id))
-      return state.messages
-        .filter((m) => siblingIds.has(m.conversationId))
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    }
     return state.messages
       .filter((m) => m.conversationId === conv.id)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  }, [state.messages, unified, siblings, conv.id])
+  }, [state.messages, conv.id])
 
-  // The conversation the composer is currently attached to.
   const activeConv: Conversation = useMemo(() => {
     if (!unified) return conv
-    return siblings.find((s) => s.channel === replyChannel) || conv
-  }, [unified, siblings, replyChannel, conv])
+    const wa = conv.channelThreads?.whatsapp
+    const em = conv.channelThreads?.email
+    return {
+      ...conv,
+      channel: replyChannel,
+      phoneNumberId: wa?.phoneNumberId || conv.phoneNumberId,
+      emailAccountId: em?.emailAccountId || conv.emailAccountId,
+      gmailThreadId: em?.gmailThreadId || conv.gmailThreadId,
+      outreachThreadId:
+        replyChannel === 'whatsapp'
+          ? wa?.outreachThreadId || conv.outreachThreadId
+          : em?.outreachThreadId || conv.outreachThreadId,
+    }
+  }, [unified, conv, replyChannel])
 
   const [draft, setDraft] = useState('')
   const [replying, setReplying] = useState(false)
@@ -755,22 +770,27 @@ function Thread() {
         <div className="rx-thread-head-left">
           <div className="rx-conv-avatar" style={{ width: 40, height: 40 }}>
             {initials}
-            <span className={`rx-conv-badge ${conv.channel}`}>
-              {channelBadgeLetter(conv.channel)}
-            </span>
+            <div className="rx-conv-badges">
+              {availableChannels.map((ch) => (
+                <span key={ch} className={`rx-conv-badge ${ch}`} title={channelLabelShort(ch)}>
+                  {channelBadgeLetter(ch)}
+                </span>
+              ))}
+            </div>
           </div>
           <div>
             <div style={{ fontWeight: 600, fontSize: 14.5, letterSpacing: '-0.01em' }}>
               {inf?.name}
               {conv.isLive ? <span className="rx-live-tag mono" style={{ marginLeft: 8 }}>LIVE</span> : null}
-              {conv.outreachThreadId ? (
-                <span className="rx-sql-tag mono" style={{ marginLeft: 6 }} title={`SQL thread ${conv.outreachThreadId}`}>SQL</span>
+              {conv.outreachConversationId ? (
+                <span className="rx-sql-tag mono" style={{ marginLeft: 6 }} title="Unified SQL conversation">SQL</span>
               ) : null}
             </div>
             <div className="rx-text-xs rx-muted mono">
               {unified
-                ? `${availableChannels.length} channels · ${availableChannels.map(channelLabelShort).join(' · ')}`
-                : conv.channel === 'whatsapp' ? inf?.phone
+                ? [inf?.phone && `+${inf.phone.replace(/^\+/, '')}`, inf?.email].filter(Boolean).join(' · ') ||
+                  `${availableChannels.length} channels · ${availableChannels.map(channelLabelShort).join(' · ')}`
+                : conv.channel === 'whatsapp' ? (inf?.phone ? `+${inf.phone.replace(/^\+/, '')}` : '')
                 : conv.channel === 'instagram' ? (handle || 'no handle')
                 : inf?.email}
             </div>
@@ -875,15 +895,13 @@ function Thread() {
           </div>
         ) : (
           messages.map((m) => {
-            const msgChannel = unified
-              ? (convChannelById.get(m.conversationId) || conv.channel)
-              : conv.channel
+            const msgChannel = unified && (conv.channels?.length || 0) > 1 ? m.channel : conv.channel
             return (
               <MessageBubble
                 key={m.id}
                 msg={m}
                 channel={msgChannel}
-                showChannelChip={unified}
+                showChannelChip={unified && (conv.channels?.length || 0) > 1}
                 onReact={(id, em) => {
                   if (!canReact) {
                     actions.toast(

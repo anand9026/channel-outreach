@@ -271,6 +271,23 @@ export interface Conversation {
   gmailThreadId?: string
   /** Unified SQL thread id from outreach_threads */
   outreachThreadId?: string
+  /** Master conversation id — one person across WA + email */
+  outreachConversationId?: string
+  /** Active channels on this conversation */
+  channels?: OutreachChannel[]
+  /** Per-channel thread handles for live replies */
+  channelThreads?: Partial<
+    Record<
+      OutreachChannel,
+      {
+        outreachThreadId: string
+        providerThreadId: string
+        gmailThreadId?: string
+        phoneNumberId?: string
+        emailAccountId?: string
+      }
+    >
+  >
   /** Provider-side thread key (phone digits, Gmail thread id, etc.) */
   providerThreadId?: string
   /** Free-form user labels for triage (hot lead / follow-up / vendor / …) */

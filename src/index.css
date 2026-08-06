@@ -1625,7 +1625,6 @@ a {
 .rx-conv-badge {
   position: absolute;
   bottom: -2px;
-  right: -2px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -1634,6 +1633,23 @@ a {
   place-items: center;
   color: var(--surface);
   font-size: 8px;
+}
+.rx-conv-badges {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  display: flex;
+  gap: 2px;
+}
+.rx-conv-badges .rx-conv-badge {
+  position: static;
+  width: 13px;
+  height: 13px;
+  font-size: 7px;
+}
+.rx-conv-contact {
+  line-height: 1.2;
+  opacity: 0.85;
 }
 .rx-conv-badge.wa { background: var(--wa); }
 .rx-conv-badge.email { background: var(--email); }
