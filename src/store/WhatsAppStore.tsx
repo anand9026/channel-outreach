@@ -312,6 +312,10 @@ type Action =
   | { type: 'MERGE_OUTREACH_THREADS'; threads: OutreachThreadRow[] }
   | { type: 'MERGE_OUTREACH_CONVERSATIONS'; conversations: OutreachConversationRow[] }
   | {
+      type: 'LINK_CONVERSATIONS_TO_OUTREACH_CAMPAIGN'
+      payload: { campaignId: string; influencerIds: string[] }
+    }
+  | {
       type: 'MERGE_OUTREACH_SQL_MESSAGES'
       payload: {
         conversationId: string
@@ -609,6 +613,53 @@ function findInfluencerForConversation(
   return undefined
 }
 
+function outreachCampaignIdsFromThreads(threads: OutreachThreadRow[]): string[] {
+  const ids = new Set<string>()
+  for (const t of threads) {
+    if (t.outreach_campaign_id) ids.add(t.outreach_campaign_id)
+  }
+  return [...ids]
+}
+
+function lastOutreachCampaignIdFromThreads(
+  threads: OutreachThreadRow[],
+): string | undefined {
+  let best: { at: string; id: string } | undefined
+  for (const t of threads) {
+    if (!t.outreach_campaign_id) continue
+    const at = t.last_message_at || ''
+    if (!best || at > best.at) {
+      best = { at, id: t.outreach_campaign_id }
+    }
+  }
+  return best?.id
+}
+
+function unionOutreachCampaignIds(...lists: (string[] | undefined)[]): string[] {
+  const ids = new Set<string>()
+  for (const list of lists) {
+    for (const id of list || []) {
+      if (id) ids.add(id)
+    }
+  }
+  return [...ids]
+}
+
+function campaignIdForSqlMessage(
+  conv: Conversation,
+  m: OutreachMessageRow,
+): string | undefined {
+  const threadId = m.outreach_thread_id
+  if (threadId && conv.channelThreads) {
+    for (const ct of Object.values(conv.channelThreads)) {
+      if (ct?.outreachThreadId === threadId && ct.outreachCampaignId) {
+        return ct.outreachCampaignId
+      }
+    }
+  }
+  return conv.lastCampaignId || conv.campaignIds[0]
+}
+
 function buildChannelThreadsFromSql(
   threads: OutreachThreadRow[],
   defaultPnid?: string,
@@ -623,6 +674,7 @@ function buildChannelThreadsFromSql(
       gmailThreadId: ch === 'email' ? t.provider_thread_id : undefined,
       phoneNumberId: ch === 'whatsapp' ? defaultPnid : undefined,
       emailAccountId: ch === 'email' ? gmailAccId : undefined,
+      outreachCampaignId: t.outreach_campaign_id || undefined,
     }
   }
   return out
@@ -2041,6 +2093,8 @@ function reducer(state: AppState, action: Action): AppState {
           .slice(0, 140)
         const waThread = channelThreads.whatsapp
         const emailThread = channelThreads.email
+        const threadCampaignIds = outreachCampaignIdsFromThreads(row.threads || [])
+        const lastCampaignId = lastOutreachCampaignIdFromThreads(row.threads || [])
 
         const payload: Conversation = {
           id: convId,
@@ -2049,7 +2103,8 @@ function reducer(state: AppState, action: Action): AppState {
           phoneNumberId: waThread?.phoneNumberId,
           emailAccountId: emailThread?.emailAccountId,
           influencerId: inf.id,
-          campaignIds: [],
+          campaignIds: threadCampaignIds,
+          lastCampaignId,
           status: 'open',
           lastMessageAt: lastAt,
           unreadCount: row.unread_count || 0,
@@ -2075,7 +2130,8 @@ function reducer(state: AppState, action: Action): AppState {
                   ...c,
                   ...payload,
                   labels: c.labels,
-                  campaignIds: c.campaignIds.length ? c.campaignIds : payload.campaignIds,
+                  campaignIds: unionOutreachCampaignIds(c.campaignIds, payload.campaignIds),
+                  lastCampaignId: payload.lastCampaignId || c.lastCampaignId,
                 }
               : c,
           )
@@ -2099,6 +2155,34 @@ function reducer(state: AppState, action: Action): AppState {
         conversations: conversations.sort((a, b) =>
           b.lastMessageAt.localeCompare(a.lastMessageAt),
         ),
+      }
+    }
+    case 'LINK_CONVERSATIONS_TO_OUTREACH_CAMPAIGN': {
+      const { campaignId, influencerIds } = action.payload
+      const idSet = new Set(influencerIds)
+      return {
+        ...state,
+        conversations: state.conversations.map((c) => {
+          if (!idSet.has(c.influencerId)) return c
+          return {
+            ...c,
+            campaignIds: unionOutreachCampaignIds(c.campaignIds, [campaignId]),
+            lastCampaignId: campaignId,
+            channelThreads: c.channelThreads
+              ? (Object.fromEntries(
+                  Object.entries(c.channelThreads).map(([ch, ct]) => [
+                    ch,
+                    ct
+                      ? {
+                          ...ct,
+                          outreachCampaignId: ct.outreachCampaignId || campaignId,
+                        }
+                      : ct,
+                  ]),
+                ) as Conversation['channelThreads'])
+              : c.channelThreads,
+          }
+        }),
       }
     }
     case 'MERGE_OUTREACH_THREADS': {
@@ -2158,6 +2242,8 @@ function reducer(state: AppState, action: Action): AppState {
         const lastAt = t.last_message_at || nowIso()
         const preview = (t.last_preview || t.subject || '').slice(0, 80)
         const existing = conversations.find((c) => c.id === convId)
+        const threadCampaignId = t.outreach_campaign_id || undefined
+        const threadCampaignIds = threadCampaignId ? [threadCampaignId] : []
 
         if (!existing) {
           conversations = [
@@ -2173,7 +2259,8 @@ function reducer(state: AppState, action: Action): AppState {
               emailAccountId:
                 channel === 'email' ? gmailAcc?.id : undefined,
               influencerId: inf.id,
-              campaignIds: [],
+              campaignIds: threadCampaignIds,
+              lastCampaignId: threadCampaignId,
               status: (t.status as Conversation['status']) || 'open',
               lastMessageAt: lastAt,
               unreadCount: t.unread_count || 0,
@@ -2203,6 +2290,8 @@ function reducer(state: AppState, action: Action): AppState {
                   outreachThreadId: t.outreach_thread_id,
                   providerThreadId: t.provider_thread_id,
                   status: (t.status as Conversation['status']) || c.status,
+                  campaignIds: unionOutreachCampaignIds(c.campaignIds, threadCampaignIds),
+                  lastCampaignId: threadCampaignId || c.lastCampaignId,
                 }
               : c,
           )
@@ -2251,6 +2340,7 @@ function reducer(state: AppState, action: Action): AppState {
           isTemplate: m.message_type === 'template',
           createdAt: m.provider_created_at || nowIso(),
           metaMessageId: mid,
+          campaignId: campaignIdForSqlMessage(conv, m),
           ...media,
         })
       }
@@ -2258,6 +2348,7 @@ function reducer(state: AppState, action: Action): AppState {
       if (newMsgs.length === 0) return state
 
       const last = newMsgs[newMsgs.length - 1]
+      const msgCampaignIds = newMsgs.map((m) => m.campaignId).filter(Boolean) as string[]
       return {
         ...state,
         messages: [...state.messages, ...newMsgs].sort((a, b) =>
@@ -2276,6 +2367,8 @@ function reducer(state: AppState, action: Action): AppState {
                     ? 0
                     : c.unreadCount +
                       newMsgs.filter((m) => m.direction === 'inbound').length,
+                campaignIds: unionOutreachCampaignIds(c.campaignIds, msgCampaignIds),
+                lastCampaignId: last.campaignId || c.lastCampaignId,
               }
             : c,
         ),
@@ -3305,6 +3398,16 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       await doLiveSync()
 
       const linkInfluencerIds = payload.influencerIds ?? []
+      if (linkInfluencerIds.length) {
+        dispatch({
+          type: 'LINK_CONVERSATIONS_TO_OUTREACH_CAMPAIGN',
+          payload: {
+            campaignId: payload.campaignId,
+            influencerIds: linkInfluencerIds,
+          },
+        })
+      }
+
       for (const influencerId of linkInfluencerIds) {
         const conv = stateRef.current.conversations.find(
           (c) =>

@@ -694,6 +694,8 @@ export type OutreachCampaignRow = {
 export type OutreachThreadRow = {
   outreach_thread_id: string
   outreach_conversation_id: string
+  /** SQL outreach_campaigns.outreach_campaign_id when thread was opened from a campaign send */
+  outreach_campaign_id?: string | null
   medium: 'whatsapp' | 'gmail' | 'instagram'
   provider_thread_id: string
   influencer_id?: string | null

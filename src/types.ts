@@ -333,6 +333,8 @@ export interface Conversation {
         gmailThreadId?: string
         phoneNumberId?: string
         emailAccountId?: string
+        /** outreach_threads.outreach_campaign_id for this channel thread */
+        outreachCampaignId?: string
       }
     >
   >
