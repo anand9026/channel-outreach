@@ -1,6 +1,7 @@
 import { CheckCircle2, Mail, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
 import { IgIcon } from './BrandIcons'
+import { WhatsAppEmbeddedSignupButton } from './WhatsAppEmbeddedSignupButton'
 import { ApiError, getGmailConnectUrl } from '../lib/api'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import { Drawer } from './Drawer'
@@ -139,25 +140,8 @@ function ConnectCard({
 }
 
 export function WaConnectDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { actions } = useWhatsAppStore()
-  const [step, setStep] = useState(0)
-  const [displayName, setDisplayName] = useState('Nova Beauty Support')
-  const [phoneDisplay, setPhoneDisplay] = useState('+91 80 4567 8901')
-
   const close = () => {
     onClose()
-    setTimeout(() => setStep(0), 320)
-  }
-
-  const finish = () => {
-    actions.connectWhatsApp({
-      displayName,
-      phoneDisplay,
-      phoneNumberId: `phn_${Math.random().toString(36).slice(2, 8)}`,
-      wabaId: `waba_${Math.random().toString(36).slice(2, 8)}`,
-      businessId: `biz_${Math.random().toString(36).slice(2, 8)}`,
-    })
-    close()
   }
 
   return (
@@ -165,108 +149,27 @@ export function WaConnectDrawer({ open, onClose }: { open: boolean; onClose: () 
       open={open}
       onClose={close}
       title="Connect WhatsApp"
-      subtitle="Meta Embedded Signup — 3 quick steps"
+      subtitle="Meta Embedded Signup — connect your WhatsApp Business account"
       size="md"
       footer={
-        <>
-          <button type="button" className="rx-btn ghost" onClick={close}>
-            Cancel
-          </button>
-          {step < 2 ? (
-            <button
-              type="button"
-              className="rx-btn primary"
-              onClick={() => setStep(step + 1)}
-              data-testid="wa-next"
-            >
-              Continue
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="rx-btn primary"
-              onClick={finish}
-              data-testid="wa-finish"
-            >
-              Complete connection
-            </button>
-          )}
-        </>
+        <button type="button" className="rx-btn ghost" onClick={close}>
+          Cancel
+        </button>
       }
     >
-      <div className="rx-steps">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className={`rx-step-bar${i === step ? ' is-active' : ''}${i < step ? ' is-done' : ''}`}
-          />
-        ))}
-      </div>
-
-      {step === 0 && (
-        <>
-          <div className="rx-step-label">Step 1 of 3</div>
-          <h3 className="rx-step-title">Choose your business</h3>
-          <p className="rx-step-desc">
-            Meta Business Suite will ask you to pick or create a WhatsApp Business Account (WABA).
-            For this demo, we&rsquo;ll simulate the flow.
-          </p>
-          <div className="rx-card compact">
-            <div className="rx-card-title">Nova Beauty Co.</div>
-            <div className="rx-card-sub">Verified · created 2024</div>
-          </div>
-        </>
-      )}
-
-      {step === 1 && (
-        <>
-          <div className="rx-step-label">Step 2 of 3</div>
-          <h3 className="rx-step-title">Set display name</h3>
-          <p className="rx-step-desc">
-            This is what creators see. Choose something recognizable and human.
-          </p>
-          <div className="rx-col rx-gap">
-            <div className="rx-field">
-              <label className="rx-label">Display name</label>
-              <input
-                className="rx-input"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                data-testid="wa-display-name"
-              />
-            </div>
-            <div className="rx-field">
-              <label className="rx-label">Phone number</label>
-              <input
-                className="rx-input"
-                value={phoneDisplay}
-                onChange={(e) => setPhoneDisplay(e.target.value)}
-              />
-            </div>
-          </div>
-        </>
-      )}
-
-      {step === 2 && (
-        <>
-          <div className="rx-step-label">Step 3 of 3</div>
-          <h3 className="rx-step-title">Review & connect</h3>
-          <p className="rx-step-desc">
-            We&rsquo;ll generate a WABA + phone number ID and connect your account.
-          </p>
-          <div className="rx-card compact">
-            <div className="rx-row" style={{ justifyContent: 'space-between' }}>
-              <span className="rx-text-2 rx-text-sm">Display name</span>
-              <strong>{displayName}</strong>
-            </div>
-            <div className="rx-divider" />
-            <div className="rx-row" style={{ justifyContent: 'space-between' }}>
-              <span className="rx-text-2 rx-text-sm">Phone</span>
-              <strong>{phoneDisplay}</strong>
-            </div>
-          </div>
-        </>
-      )}
+      <p className="rx-step-desc">
+        You&apos;ll sign in with Facebook, pick or create a WhatsApp Business account, and
+        verify a phone number. Use the sandbox business while testing.
+      </p>
+      <ul className="rx-list rx-text-sm rx-mb-4">
+        <li>Meta Business must be verified (or use Sandbox Business)</li>
+        <li>You must be admin on that business</li>
+        <li>Phone number must not be active on WhatsApp mobile app</li>
+      </ul>
+      <WhatsAppEmbeddedSignupButton
+        onConnected={() => close()}
+        testId="wa-finish"
+      />
     </Drawer>
   )
 }

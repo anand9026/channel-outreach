@@ -19,11 +19,10 @@ import {
   WaConnectDrawer,
 } from '../components/OnboardingSheet'
 import {
-  API_BASE_URL,
   ApiError,
   getGmailConnectUrl,
   getGmailConnection,
-  getWhatsAppConnection,
+  resolveOrgId,
 } from '../lib/api'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 
@@ -106,42 +105,42 @@ export function ConnectPage() {
     }
   }
 
-  const loadCloudApiTestNumber = async () => {
+  const refreshWhatsApp = async (opts?: { quiet?: boolean }) => {
     setLoadingWa(true)
     try {
-      const info = await getWhatsAppConnection()
-      if (!info?.phone_number_id || !info?.waba_id) {
-        actions.toast('API returned incomplete connection info', 'error')
-        return
+      const info = await actions.syncWhatsAppConnection()
+      if (!opts?.quiet) {
+        if (info?.connected) {
+          actions.toast('WhatsApp connection synced', 'success')
+        } else if (!info?.embedded_signup_configured) {
+          actions.toast(
+            'WhatsApp Embedded Signup is not configured on the server (.env APP_ID + CONFIG_ID)',
+            'error',
+          )
+        } else {
+          actions.toast('No WhatsApp channel connected for this org yet', 'info')
+        }
       }
-      if (!info.has_access_token) {
+    } catch (err) {
+      if (!opts?.quiet) {
         actions.toast(
-          'Server has no WHATSAPP_OUTREACH_ACCESS_TOKEN — set it in reelax-server .env',
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Failed to sync WhatsApp connection',
           'error',
         )
-        return
       }
-      actions.connectWhatsApp({
-        displayName: 'Cloud API Test Number',
-        phoneDisplay: '+1 555 (Meta test)',
-        phoneNumberId: info.phone_number_id,
-        wabaId: info.waba_id,
-        businessId: 'bridgeness',
-      })
-      actions.toast(`WhatsApp loaded from ${API_BASE_URL}`, 'success')
-    } catch (err) {
-      actions.toast(
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Failed to load connection',
-        'error',
-      )
     } finally {
       setLoadingWa(false)
     }
   }
+
+  useEffect(() => {
+    void refreshWhatsApp({ quiet: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="rx-page">
@@ -173,7 +172,7 @@ export function ConnectPage() {
         onConnectIg={() => setIgDrawer(true)}
         onConnectGmail={() => void connectGmail()}
         onRefreshGmail={() => void refreshGmail()}
-        onRefreshWa={() => void loadCloudApiTestNumber()}
+        onRefreshWa={() => void refreshWhatsApp()}
       />
 
       <details className="rx-legacy-connect rx-mt-4">
@@ -205,7 +204,8 @@ export function ConnectPage() {
             </div>
           ) : (
             <div className="rx-help" style={{ marginTop: 2 }}>
-              API <span className="mono">{API_BASE_URL}</span>
+              Sign in with Facebook via Embedded Signup · org{' '}
+              <span className="mono">{resolveOrgId()}</span>
             </div>
           )}
 
@@ -218,23 +218,21 @@ export function ConnectPage() {
               <span className="rx-badge">Not connected</span>
             )}
             <div className="rx-row" style={{ gap: 8 }}>
-              {!waConnected ? (
-                <button
-                  type="button"
-                  className="rx-btn secondary sm"
-                  disabled={loadingWa}
-                  onClick={() => void loadCloudApiTestNumber()}
-                >
-                  {loadingWa ? <Loader2 size={13} className="rx-spin" /> : null}
-                  Use test number
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="rx-btn secondary sm"
+                disabled={loadingWa}
+                onClick={() => void refreshWhatsApp()}
+                title="Refresh from server"
+              >
+                {loadingWa ? <Loader2 size={13} className="rx-spin" /> : <RefreshCw size={13} />}
+              </button>
               <button
                 type="button"
                 className={`rx-btn ${waConnected ? 'secondary' : 'primary'} sm`}
                 onClick={() => setWaDrawer(true)}
               >
-                {waConnected ? 'Add number' : 'Connect'}
+                {waConnected ? 'Add number' : 'Connect with Facebook'}
               </button>
             </div>
           </div>

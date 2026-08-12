@@ -124,11 +124,48 @@ function withOrgParams(input?: { org_id?: string }) {
 }
 
 export type ConnectionInfo = {
+  app_id?: string | null
+  config_id?: string | null
   phone_number_id: string | null
   waba_id: string | null
   graph_api_version: string
   has_access_token: boolean
+  connected?: boolean
+  display_phone_number?: string | null
+  display_name?: string | null
+  embedded_signup_configured?: boolean
   webhook_verify_token_configured?: boolean
+  channels?: Array<{
+    outreach_channel_id?: string
+    phone_number_id?: string
+    waba_id?: string | null
+    display_phone_number?: string | null
+    display_name?: string | null
+    connected?: boolean
+    has_access_token?: boolean
+  }>
+}
+
+export type WhatsAppConnectConfig = {
+  app_id: string
+  config_id: string
+  graph_api_version: string
+  redirect_uri?: string | null
+  state: string
+  org_id: string
+  user_id: string
+}
+
+export type WhatsAppConnectResult = {
+  connected: boolean
+  org_id: string
+  user_id: string
+  waba_id: string
+  phone_number_id: string
+  display_phone_number?: string | null
+  display_name?: string | null
+  outreach_channel_id?: string
+  has_access_token?: boolean
 }
 
 export type InboxThread = {
@@ -229,10 +266,50 @@ type ApiSuccess<T> = {
   data?: T
 }
 
-export async function getWhatsAppConnection() {
+export async function getWhatsAppConnection(orgId?: string) {
+  const q = withOrgParams({ org_id: orgId })
   const res = await request<ApiSuccess<ConnectionInfo>>(
-    '/whatsapp-outreach/connection',
+    `/whatsapp-outreach/connection?${q.toString()}`,
   )
+  return res.data
+}
+
+export async function getWhatsAppConnectConfig(input?: {
+  org_id?: string
+  user_id?: string
+}) {
+  const q = withOrgParams({ org_id: input?.org_id })
+  if (input?.user_id) q.set('user_id', input.user_id)
+  const res = await request<ApiSuccess<WhatsAppConnectConfig>>(
+    `/whatsapp-outreach/connect?${q.toString()}`,
+  )
+  if (!res.data?.app_id || !res.data?.config_id) {
+    throw new ApiError('WhatsApp connect is not configured on the server', 500, res)
+  }
+  return res.data
+}
+
+export async function completeWhatsAppConnect(input: {
+  code: string
+  state: string
+  org_id?: string
+  user_id?: string
+  waba_id?: string
+  phone_number_id?: string
+  display_phone_number?: string
+  display_name?: string
+  verified_business_name?: string
+}) {
+  const res = await request<ApiSuccess<WhatsAppConnectResult>>(
+    '/whatsapp-outreach/connect/callback',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+  if (!res.data?.phone_number_id) {
+    throw new ApiError('WhatsApp connect did not return a phone number', 500, res)
+  }
   return res.data
 }
 

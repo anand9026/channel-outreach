@@ -1983,28 +1983,56 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_LIVE_CONNECTION': {
       const conn = action.connection
       let whatsAppNumbers = state.whatsAppNumbers
-      if (conn?.phone_number_id) {
+
+      const upsertFromApi = (input: {
+        phoneNumberId: string
+        wabaId?: string | null
+        displayName?: string | null
+        phoneDisplay?: string | null
+        id?: string
+      }) => {
+        if (!input.phoneNumberId) return
         const exists = whatsAppNumbers.some(
-          (n) => n.phoneNumberId === conn.phone_number_id,
+          (n) => n.phoneNumberId === input.phoneNumberId,
         )
-        if (!exists) {
-          whatsAppNumbers = [
-            ...whatsAppNumbers,
-            {
-              id: uid('wa'),
-              organizationId: resolveOrgId(),
-              displayName: 'Reelax Live WhatsApp',
-              phoneDisplay: '7706947747',
-              phoneNumberId: conn.phone_number_id,
-              wabaId: conn.waba_id ?? '',
-              businessId: '',
-              qualityRating: 'GREEN',
-              messagingTier: 'TIER_10K',
-              connectedAt: nowIso(),
-            },
-          ]
-        }
+        if (exists) return
+        whatsAppNumbers = [
+          ...whatsAppNumbers,
+          {
+            id: input.id || uid('wa'),
+            organizationId: resolveOrgId(),
+            displayName: input.displayName || 'WhatsApp Business',
+            phoneDisplay: input.phoneDisplay || '',
+            phoneNumberId: input.phoneNumberId,
+            wabaId: input.wabaId || '',
+            businessId: '',
+            qualityRating: 'GREEN',
+            messagingTier: 'TIER_10K',
+            connectedAt: nowIso(),
+          },
+        ]
       }
+
+      if (conn?.channels?.length) {
+        for (const ch of conn.channels) {
+          if (!ch.phone_number_id || ch.connected === false) continue
+          upsertFromApi({
+            id: ch.outreach_channel_id,
+            phoneNumberId: ch.phone_number_id,
+            wabaId: ch.waba_id,
+            displayName: ch.display_name,
+            phoneDisplay: ch.display_phone_number,
+          })
+        }
+      } else if (conn?.connected && conn.phone_number_id) {
+        upsertFromApi({
+          phoneNumberId: conn.phone_number_id,
+          wabaId: conn.waba_id,
+          displayName: conn.display_name,
+          phoneDisplay: conn.display_phone_number,
+        })
+      }
+
       return {
         ...state,
         whatsAppNumbers,
@@ -2829,6 +2857,7 @@ interface StoreContextValue {
       domain: string
     }) => void
     syncGmail: (info: GmailConnectionInfo | null) => void
+    syncWhatsAppConnection: () => Promise<ConnectionInfo | null | undefined>
     connectInstagram: (data: {
       handle: string
       displayName: string
@@ -3595,7 +3624,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.liveInbox.connection) return
     let cancelled = false
-    getWhatsAppConnection()
+    getWhatsAppConnection(resolveOrgId())
       .then((conn) => {
         if (!cancelled)
           dispatch({ type: 'SET_LIVE_CONNECTION', connection: conn ?? null })
@@ -3957,6 +3986,11 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             userId: info?.user_id,
           },
         })
+      },
+      syncWhatsAppConnection: async () => {
+        const conn = await getWhatsAppConnection(resolveOrgId())
+        dispatch({ type: 'SET_LIVE_CONNECTION', connection: conn ?? null })
+        return conn
       },
       connectInstagram: (data) => {
         dispatch({ type: 'CONNECT_INSTAGRAM', payload: data })

@@ -11,6 +11,7 @@ const endpoints = [
   ['Outreach threads', `/outreach/threads?org_id=${ORG}`],
   ['Outreach templates', `/outreach/templates?org_id=${ORG}`],
   ['WhatsApp connection', `/whatsapp-outreach/connection?org_id=${ORG}`],
+  ['WhatsApp connect config', `/whatsapp-outreach/connect?org_id=${ORG}`],
   ['WhatsApp templates', `/whatsapp-outreach/templates?org_id=${ORG}&limit=5`],
   ['WhatsApp inbox', `/whatsapp-outreach/inbox?org_id=${ORG}`],
   ['Gmail connection', `/gmail-outreach/connection?user_id=demo_user&channel_id=default&org_id=${ORG}`],
@@ -29,7 +30,9 @@ function summarize(body) {
   if (Array.isArray(d.messages)) keys.push(`messages=${d.messages.length}`)
   if (d.data && Array.isArray(d.data)) keys.push(`items=${d.data.length}`)
   if (d.connection) keys.push('connection=ok')
-  if (d.phone_number_id) keys.push(`pnid=${d.phone_number_id}`)
+  if (d.app_id) keys.push(`app_id=${d.app_id}`)
+  if (d.config_id) keys.push(`config_id=ok`)
+  if (d.embedded_signup_configured) keys.push('embedded_signup=ok')
   if (d.email) keys.push(`email=${d.email}`)
   if (body.success === false) {
     const err = body.err_l?.[0]?.m || body.error?.message || 'unknown error'
