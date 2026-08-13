@@ -13,7 +13,20 @@ import {
 } from '../lib/variables'
 import { connectionMode, useWhatsAppStore } from '../store/WhatsAppStore'
 import type { AudienceSource, CascadeOptions, DataFieldKey, VariableBinding } from '../types'
+import type { CampaignAiMode, CampaignAiObjective } from '../types'
 import { collectionCreatorCount, isEmailTemplateSendable, isWhatsAppTemplateSendable } from '../types'
+import {
+  AI_MODE_LABELS,
+  AI_OBJECTIVE_LABELS,
+} from '../lib/outreach-scope'
+
+const AI_OBJECTIVE_OPTIONS = (
+  Object.entries(AI_OBJECTIVE_LABELS) as Array<[CampaignAiObjective, string]>
+).map(([value, label]) => ({ value, label }))
+
+const AI_MODE_OPTIONS = (
+  Object.entries(AI_MODE_LABELS) as Array<[CampaignAiMode, string]>
+).map(([value, label]) => ({ value, label }))
 
 export function CampaignsPage() {
   const { state, actions } = useWhatsAppStore()
@@ -49,6 +62,8 @@ export function CampaignsPage() {
   const [pickedAudience, setPickedAudience] = useState<string[]>([])
   const [createMetaTemplates, setCreateMetaTemplates] = useState<MetaTemplate[]>([])
   const [createTemplateName, setCreateTemplateName] = useState('')
+  const [aiObjective, setAiObjective] = useState<CampaignAiObjective>('gauge_interest')
+  const [aiMode, setAiMode] = useState<CampaignAiMode>('assist')
 
   useEffect(() => {
     void listWhatsAppTemplates({ limit: 50 })
@@ -278,6 +293,8 @@ export function CampaignsPage() {
       audienceSource,
       collectionId: audienceSource === 'collection' ? collectionId : null,
       influencerIds: ids,
+      aiObjective,
+      aiMode,
     })
     setShowCreate(false)
     setNewName('')
@@ -464,6 +481,32 @@ export function CampaignsPage() {
                   {state.brands.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>AI objective</span>
+                <select
+                  value={aiObjective}
+                  onChange={(e) => setAiObjective(e.target.value as CampaignAiObjective)}
+                >
+                  {AI_OBJECTIVE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>AI mode</span>
+                <select
+                  value={aiMode}
+                  onChange={(e) => setAiMode(e.target.value as CampaignAiMode)}
+                >
+                  {AI_MODE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>

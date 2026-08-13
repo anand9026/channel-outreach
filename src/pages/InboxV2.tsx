@@ -140,7 +140,12 @@ export function InboxV2() {
   }, [state.conversations])
 
   const inboxRows = useMemo(() => {
-    const rows = expandToInboxCampaignRows(state.conversations, state.messages)
+    const rows = expandToInboxCampaignRows(
+      state.conversations,
+      state.messages,
+      state.campaignParticipantIndex,
+      state.campaigns,
+    )
     return rows
       .filter((row) => inboxRowMatchesCampaignFilter(row, state.inboxCampaignFilter))
       .filter((row) => {
@@ -182,6 +187,7 @@ export function InboxV2() {
     state.influencers,
     state.inboxFilters,
     state.campaigns,
+    state.campaignParticipantIndex,
     tab,
     labelFilter,
     savedView,

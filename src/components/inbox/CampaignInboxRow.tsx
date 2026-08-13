@@ -97,6 +97,11 @@ export function CampaignInboxRow({
 
         <div className="rx-inbox-campaign-line">
           <span className="rx-inbox-campaign-name">{campaignLabel}</span>
+          {row.aiMode && row.aiMode !== 'off' && row.campaignId !== AD_HOC_CAMPAIGN_ID ? (
+            <span className="rx-badge dark" title="AI scoped to this campaign">
+              AI
+            </span>
+          ) : null}
           {row.intent ? (
             <span className={`rx-intent-chip intent-${row.intent}`}>{row.intent.replace('_', ' ')}</span>
           ) : null}

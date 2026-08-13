@@ -17,6 +17,8 @@ import { AiSuggestReply } from './AiSuggestReply'
 import { ConversationChannelTabs } from './ConversationChannelTabs'
 import { EmailThreadPanel } from './EmailThreadPanel'
 import { ThreadHeaderMenu } from './ThreadHeaderMenu'
+import { useOutreachScope } from '../../hooks/useOutreachScope'
+import { AI_OBJECTIVE_LABELS } from '../../lib/outreach-scope'
 import {
   channelLabelShort,
   contactLineForConversation,
@@ -24,7 +26,7 @@ import {
   initialsForName,
   outreachChannelsForConversation,
 } from './inbox-conversation-utils'
-import { whatsappMediaUrl } from '../../lib/api'
+import { resolveOrgId, whatsappMediaUrl } from '../../lib/api'
 import { defaultEmailReplySubject } from '../../lib/email-reply-subject'
 import { useWhatsAppStore } from '../../store/WhatsAppStore'
 import type { Conversation, Message, OutreachChannel } from '../../types'
@@ -77,31 +79,88 @@ function filterMessagesForScope(
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
 
+const GENERIC_MEDIA_BODIES = new Set(['Image', 'Video', 'Document', 'Sticker', 'Audio'])
+
+function isGenericMediaBody(body: string | undefined | null): boolean {
+  if (!body) return true
+  return GENERIC_MEDIA_BODIES.has(body.trim())
+}
+
 function InboundMedia({ msg }: { msg: Message }) {
-  if (!msg.mediaId || !msg.mediaKind) return null
-  const url = whatsappMediaUrl(msg.mediaId)
-  if (msg.mediaKind === 'image' || msg.mediaKind === 'sticker') {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-media">
-        <img src={url} alt={msg.caption || 'image'} loading="lazy" />
-      </a>
-    )
-  }
-  if (msg.mediaKind === 'video') {
-    return <video src={url} controls className="rx-msg-media video" preload="metadata" />
-  }
-  if (msg.mediaKind === 'audio') {
-    return <audio src={url} controls className="rx-msg-audio" preload="metadata" />
-  }
-  if (msg.mediaKind === 'document') {
+  const orgId = resolveOrgId()
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  if (!msg.mediaId) return null
+
+  const url = whatsappMediaUrl(msg.mediaId, orgId)
+  const kind = msg.mediaKind || 'document'
+
+  if (loadState === 'error') {
     return (
       <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-doc">
-        <FileText size={14} /> Document ({msg.mediaMime || 'file'})
+        <FileText size={14} /> Could not preview — open media
         <ExternalLink size={12} />
       </a>
     )
   }
-  return null
+
+  if (kind === 'image' || kind === 'sticker') {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-media">
+        {loadState === 'loading' ? (
+          <div className="rx-text-xs rx-muted" style={{ padding: '8px 12px' }}>
+            Loading image…
+          </div>
+        ) : null}
+        <img
+          src={url}
+          alt={msg.caption || 'image'}
+          loading="lazy"
+          onLoad={() => setLoadState('ready')}
+          onError={() => setLoadState('error')}
+          style={loadState === 'loading' ? { display: 'none' } : undefined}
+        />
+      </a>
+    )
+  }
+  if (kind === 'video') {
+    return (
+      <video
+        src={url}
+        controls
+        className="rx-msg-media video"
+        preload="metadata"
+        onLoadedData={() => setLoadState('ready')}
+        onError={() => setLoadState('error')}
+      />
+    )
+  }
+  if (kind === 'audio') {
+    return (
+      <audio
+        src={url}
+        controls
+        className="rx-msg-audio"
+        preload="metadata"
+        onLoadedData={() => setLoadState('ready')}
+        onError={() => setLoadState('error')}
+      />
+    )
+  }
+  if (kind === 'document') {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-doc">
+        <FileText size={14} /> {msg.caption || 'Document'} ({msg.mediaMime || 'file'})
+        <ExternalLink size={12} />
+      </a>
+    )
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="rx-msg-doc">
+      <FileText size={14} /> Open attachment
+      <ExternalLink size={12} />
+    </a>
+  )
 }
 
 function ChatMessageBubble({
@@ -124,7 +183,10 @@ function ChatMessageBubble({
     <div className={`rx-msg-row ${msg.direction === 'outbound' ? 'out' : 'in'}`}>
       <div className="rx-msg-wrap">
         {msg.mediaId ? <InboundMedia msg={msg} /> : null}
-        {msg.body ? (
+        {msg.caption && msg.mediaId ? (
+          <div className="rx-msg-caption">{msg.caption}</div>
+        ) : null}
+        {msg.body && !(msg.mediaId && isGenericMediaBody(msg.body)) ? (
           <div className="rx-msg" data-channel={channel}>
             {msg.body}
           </div>
@@ -206,12 +268,12 @@ type Props = {
 export function ConversationThread({ scopedCampaignId }: Props) {
   const { state, actions } = useWhatsAppStore()
   const conv = state.conversations.find((c) => c.id === state.selectedConversationId)!
+  const scope = useOutreachScope(scopedCampaignId)
   const inf = state.influencers.find((i) => i.id === conv.influencerId)
-  const scopedCampaign = state.campaigns.find((c) => c.id === scopedCampaignId)
-  const campaignTitle =
-    scopedCampaignId === AD_HOC_CAMPAIGN_ID
-      ? 'Ad-hoc'
-      : scopedCampaign?.name || 'Campaign'
+  const campaignTitle = scope?.campaignName || 'Campaign'
+  const scopedIntent = scope?.intent
+  const scopedLabels = scope?.labels || []
+  const scopedPricing = scope?.extractedPricing
 
   const scopedMessages = useMemo(
     () => filterMessagesForScope(state.messages, conv.id, scopedCampaignId, conv.lastCampaignId),
@@ -317,12 +379,21 @@ export function ConversationThread({ scopedCampaignId }: Props) {
   const addLabel = (l: string) => {
     const clean = l.trim().toLowerCase()
     if (!clean) return
-    const cur = conv.labels || []
-    if (cur.includes(clean)) return
-    actions.setConversationLabels(conv.id, [...cur, clean])
+    if (scopedLabels.includes(clean)) return
+    const next = [...scopedLabels, clean]
+    if (scopedCampaignId !== AD_HOC_CAMPAIGN_ID) {
+      actions.setParticipantTags(scopedCampaignId, conv.influencerId, next)
+    } else {
+      actions.setConversationLabels(conv.id, next)
+    }
   }
   const removeLabel = (l: string) => {
-    actions.setConversationLabels(conv.id, (conv.labels || []).filter((x) => x !== l))
+    const next = scopedLabels.filter((x) => x !== l)
+    if (scopedCampaignId !== AD_HOC_CAMPAIGN_ID) {
+      actions.setParticipantTags(scopedCampaignId, conv.influencerId, next)
+    } else {
+      actions.setConversationLabels(conv.id, next)
+    }
   }
 
   const displayName = displayNameForConversation(conv, inf)
@@ -353,19 +424,35 @@ export function ConversationThread({ scopedCampaignId }: Props) {
             <div className="rx-thread-title-row">
               <div className="rx-thread-title">{displayName}</div>
               <span className="rx-thread-campaign-pill">{campaignTitle}</span>
+              {scope?.aiFeaturesEnabled ? (
+                <span className="rx-badge dark" title={AI_OBJECTIVE_LABELS[scope.aiObjective]}>
+                  AI · {scope.aiObjective.replace(/_/g, ' ')}
+                </span>
+              ) : null}
+              {scope?.participant?.intentSource === 'ai' && scope.intent ? (
+                <span className="rx-text-xs rx-muted">AI classified</span>
+              ) : null}
             </div>
             {contactLine ? (
               <div className="rx-thread-contact-inline mono">{contactLine}</div>
+            ) : null}
+            {scopedPricing?.amount ? (
+              <div className="rx-text-xs rx-muted">
+                Pricing: {scopedPricing.currency || 'INR'} {scopedPricing.amount}
+                {scopedPricing.notes ? ` · ${scopedPricing.notes}` : ''}
+              </div>
             ) : null}
           </div>
         </div>
         <div className="rx-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <ThreadHeaderMenu
             conversationId={conv.id}
-            intent={conv.intent}
-            labels={conv.labels || []}
+            intent={scopedIntent}
+            labels={scopedLabels}
             suggestedLabels={SUGGESTED_LABELS}
-            onIntentChange={(intent) => actions.setConversationIntent(conv.id, intent)}
+            onIntentChange={(intent) =>
+              actions.setConversationIntent(conv.id, intent, scopedCampaignId)
+            }
             onAddLabel={addLabel}
             onRemoveLabel={removeLabel}
           />
@@ -426,11 +513,14 @@ export function ConversationThread({ scopedCampaignId }: Props) {
       </div>
 
       <div className="rx-composer" data-channel={activeChannel}>
-        <AiSuggestReply
-          messages={channelMessages}
-          creatorName={displayName}
-          onInsert={insertAtCaret}
-        />
+        {scope ? (
+          <AiSuggestReply
+            scope={scope}
+            messages={channelMessages}
+            creatorName={displayName}
+            onInsert={insertAtCaret}
+          />
+        ) : null}
         {activeChannel === 'whatsapp' ? (
           <div className={`rx-window-note ${waWindowOpen ? 'open' : 'closed'}`}>
             <span>

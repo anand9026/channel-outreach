@@ -39,6 +39,7 @@ import {
   getWhatsAppInboxMessages,
   listGmailThreads,
   listOutreachCampaigns,
+  listOutreachCampaignParticipants,
   listOutreachChannels,
   listOutreachCollections,
   listOutreachCollectionInfluencers,
@@ -48,11 +49,13 @@ import {
   listOutreachThreadMessages,
   listOutreachThreads,
   listWhatsAppInbox,
+  patchOutreachCampaignParticipant,
   resolveOrgId,
   syncOutreachWhatsAppTemplates,
   sendGmailMessage,
   sendWhatsAppText,
   sendOutreachCampaign,
+  updateOutreachCampaign,
   type ConnectionInfo,
   type GmailConnectionInfo,
   type GmailThreadMessage,
@@ -60,6 +63,7 @@ import {
   type InboxMessage as ApiInboxMessage,
   type InboxThread as ApiInboxThread,
   type OutreachCampaignRow,
+  type OutreachCampaignParticipantRow,
   type OutreachChannelRow,
   type OutreachCollectionRow,
   type OutreachCollectionInfluencerRow,
@@ -73,6 +77,8 @@ import {
   type AudienceSource,
   type Brand,
   type Campaign,
+  type CampaignAiObjective,
+  type CampaignAiMode,
   type CampaignAnalytics,
   type CampaignChannel,
   type CascadeOptions,
@@ -94,7 +100,12 @@ import {
   type TemplateCategory,
   type VariableBinding,
   type WhatsAppNumber,
+  AD_HOC_CAMPAIGN_ID,
 } from '../types'
+import {
+  participantIndexKey,
+  type CampaignParticipantIndex,
+} from '../components/inbox/inbox-campaign-rows'
 
 export interface ToastItem {
   id: string
@@ -109,6 +120,8 @@ export interface AppState {
   collections: CollectionList[]
   myCreatorIds: string[]
   campaigns: Campaign[]
+  /** AI intent/pricing keyed by `${campaignId}::${influencerId}` */
+  campaignParticipantIndex: CampaignParticipantIndex
   templates: Template[]
   whatsAppNumbers: WhatsAppNumber[]
   emailAccounts: EmailAccount[]
@@ -174,7 +187,7 @@ type Action =
   | { type: 'SET_INBOX_FILTERS'; patch: Partial<InboxFilters> }
   | { type: 'RESET_INBOX_FILTERS' }
   | { type: 'SET_DETAIL_CAMPAIGN'; campaignId: string | null }
-  | { type: 'SET_CONVERSATION_INTENT'; conversationId: string; intent: ConversationIntent | null }
+  | { type: 'SET_CONVERSATION_INTENT'; conversationId: string; intent: ConversationIntent | null; campaignId?: string | null }
   | { type: 'ADD_TOAST'; toast: Omit<ToastItem, 'id'> }
   | { type: 'DISMISS_TOAST'; id: string }
   | { type: 'OPEN_CONNECT'; open: boolean; kind?: OutreachChannel }
@@ -281,9 +294,17 @@ type Action =
         audienceSource: AudienceSource
         collectionId: string | null
         influencerIds: string[]
+        aiObjective?: CampaignAiObjective
       }
     }
   | { type: 'MERGE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
+  | { type: 'MERGE_OUTREACH_PARTICIPANTS'; participants: OutreachCampaignParticipantRow[] }
+  | {
+      type: 'PATCH_CAMPAIGN_AI'
+      campaignId: string
+      aiObjective?: CampaignAiObjective
+      aiMode?: CampaignAiMode
+    }
   | { type: 'HYDRATE_OUTREACH_CAMPAIGNS'; campaigns: OutreachCampaignRow[] }
   | { type: 'HYDRATE_OUTREACH_CHANNELS'; channels: OutreachChannelRow[] }
   | { type: 'HYDRATE_OUTREACH_COLLECTIONS'; collections: OutreachCollectionRow[] }
@@ -339,6 +360,7 @@ type Action =
   | { type: 'SET_NOTIFY_ENABLED'; enabled: boolean }
   | { type: 'SET_SIDEBAR_COLLAPSED'; collapsed: boolean }
   | { type: 'SET_CONV_LABELS'; conversationId: string; labels: string[] }
+  | { type: 'SET_PARTICIPANT_TAGS'; campaignId: string; influencerId: string; tags: string[] }
   | { type: 'BULK_RESOLVE'; conversationIds: string[] }
   | { type: 'BULK_ASSIGN'; conversationIds: string[]; memberId: string | undefined }
   | {
@@ -366,6 +388,7 @@ const initialState: AppState = {
   collections: [],
   myCreatorIds: seedMyCreatorIds,
   campaigns: [],
+  campaignParticipantIndex: {},
   templates: seedTemplates,
   whatsAppNumbers: seedWhatsAppNumbers,
   emailAccounts: seedEmailAccounts,
@@ -468,6 +491,35 @@ function mapDbAudienceSource(value: string): AudienceSource {
   return 'campaign_roster'
 }
 
+function parseParticipantJsonField<T>(value: unknown): T | null {
+  if (value == null) return null
+  if (typeof value === 'object') return value as T
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
+}
+
+function participantRowToIndexEntry(
+  row: OutreachCampaignParticipantRow,
+): CampaignParticipantIndex[string] {
+  const tagsRaw = parseParticipantJsonField<string[]>(row.tags)
+  const pricingRaw = parseParticipantJsonField<CampaignParticipantIndex[string]['extracted_pricing']>(
+    row.extracted_pricing,
+  )
+  return {
+    conversation_intent: row.conversation_intent ?? null,
+    tags: Array.isArray(tagsRaw) ? tagsRaw.filter(Boolean) : [],
+    extracted_pricing: pricingRaw ?? null,
+    outcome: row.outcome,
+    intent_source: row.intent_source,
+    intent_confidence: row.intent_confidence ?? null,
+    ai_summary: row.ai_summary ?? null,
+  }
+}
+
 function mapOutreachCampaignRow(row: OutreachCampaignRow): Campaign {
   return {
     id: row.outreach_campaign_id,
@@ -488,6 +540,8 @@ function mapOutreachCampaignRow(row: OutreachCampaignRow): Campaign {
     failedCount: Number(row.failed_count ?? 0),
     recipientCount: Number(row.recipient_count ?? 0),
     description: row.description ?? null,
+    aiObjective: row.ai_objective || 'gauge_interest',
+    aiMode: row.ai_mode || 'assist',
     source: 'db',
   }
 }
@@ -886,13 +940,45 @@ function reducer(state: AppState, action: Action): AppState {
       }
     case 'SET_DETAIL_CAMPAIGN':
       return { ...state, detailCampaignId: action.campaignId }
-    case 'SET_CONVERSATION_INTENT':
+    case 'SET_CONVERSATION_INTENT': {
+      const { conversationId, intent, campaignId } = action
+      if (campaignId && campaignId !== AD_HOC_CAMPAIGN_ID) {
+        const conv = state.conversations.find((c) => c.id === conversationId)
+        if (!conv) return state
+        const key = participantIndexKey(campaignId, conv.influencerId)
+        const prev = state.campaignParticipantIndex[key] || {}
+        return {
+          ...state,
+          campaignParticipantIndex: {
+            ...state.campaignParticipantIndex,
+            [key]: { ...prev, conversation_intent: intent ?? null },
+          },
+          conversations: state.conversations.map((c) =>
+            c.id === conversationId &&
+            (campaignId === c.lastCampaignId || !c.lastCampaignId)
+              ? { ...c, intent: intent ?? undefined }
+              : c,
+          ),
+        }
+      }
       return {
         ...state,
         conversations: state.conversations.map((c) =>
-          c.id === action.conversationId ? { ...c, intent: action.intent ?? undefined } : c,
+          c.id === conversationId ? { ...c, intent: action.intent ?? undefined } : c,
         ),
       }
+    }
+    case 'SET_PARTICIPANT_TAGS': {
+      const key = participantIndexKey(action.campaignId, action.influencerId)
+      const prev = state.campaignParticipantIndex[key] || {}
+      return {
+        ...state,
+        campaignParticipantIndex: {
+          ...state.campaignParticipantIndex,
+          [key]: { ...prev, tags: action.tags },
+        },
+      }
+    }
     case 'SELECT_CONVERSATION':
       return {
         ...state,
@@ -1721,6 +1807,8 @@ function reducer(state: AppState, action: Action): AppState {
         status: 'draft',
         influencerIds: action.payload.influencerIds,
         createdAt: nowIso(),
+        aiObjective: action.payload.aiObjective || 'gauge_interest',
+        aiMode: 'assist',
       }
       let collections = state.collections
       if (
@@ -1858,6 +1946,29 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         campaigns: merged,
         analytics: [...newAnalytics, ...state.analytics],
+      }
+    }
+    case 'MERGE_OUTREACH_PARTICIPANTS': {
+      const next = { ...state.campaignParticipantIndex }
+      for (const row of action.participants) {
+        if (!row.outreach_campaign_id || !row.influencer_id) continue
+        const key = participantIndexKey(row.outreach_campaign_id, row.influencer_id)
+        next[key] = participantRowToIndexEntry(row)
+      }
+      return { ...state, campaignParticipantIndex: next }
+    }
+    case 'PATCH_CAMPAIGN_AI': {
+      return {
+        ...state,
+        campaigns: state.campaigns.map((c) =>
+          c.id === action.campaignId
+            ? {
+                ...c,
+                aiObjective: action.aiObjective ?? c.aiObjective,
+                aiMode: action.aiMode ?? c.aiMode,
+              }
+            : c,
+        ),
       }
     }
     case 'LOG_WHATSAPP_SENDS': {
@@ -2836,7 +2947,16 @@ interface StoreContextValue {
     setInboxFilters: (patch: Partial<InboxFilters>) => void
     resetInboxFilters: () => void
     setDetailCampaign: (id: string | null) => void
-    setConversationIntent: (conversationId: string, intent: ConversationIntent | null) => void
+    setConversationIntent: (
+      conversationId: string,
+      intent: ConversationIntent | null,
+      campaignId?: string | null,
+    ) => void
+    setParticipantTags: (
+      campaignId: string,
+      influencerId: string,
+      tags: string[],
+    ) => void
     toast: (message: string, variant?: ToastItem['variant']) => void
     dismissToast: (id: string) => void
     openConnect: (open: boolean, kind?: OutreachChannel) => void
@@ -2924,6 +3044,8 @@ interface StoreContextValue {
       audienceSource: AudienceSource
       collectionId: string | null
       influencerIds: string[]
+      aiObjective?: CampaignAiObjective
+      aiMode?: CampaignAiMode
     }) => Promise<string | null>
     sendOutreachCampaignLive: (payload: {
       campaignId: string
@@ -2963,6 +3085,11 @@ interface StoreContextValue {
     }) => void
     setLivePolling: (polling: boolean) => void
     syncLiveInboxNow: () => Promise<void>
+    syncCampaignParticipants: (campaignIds?: string[]) => Promise<void>
+    updateCampaignAiSettings: (
+      campaignId: string,
+      patch: { aiObjective?: CampaignAiObjective; aiMode?: CampaignAiMode },
+    ) => Promise<void>
     sendWhatsAppReplyLive: (conversationId: string, body: string) => Promise<boolean>
     sendGmailReplyLive: (
       conversationId: string,
@@ -3174,6 +3301,29 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
     stateRef.current = state
   }, [state])
 
+  const refreshCampaignParticipants = useCallback(async (campaignIds?: string[]) => {
+    const cur = stateRef.current
+    const orgId = resolveOrgId()
+    const ids =
+      campaignIds ??
+      cur.campaigns.filter((c) => c.source === 'db').map((c) => c.id)
+    const dbIds = ids.filter((id) => id && !id.startsWith('camp_'))
+    if (dbIds.length === 0) return
+    const batches = await Promise.all(
+      dbIds.slice(0, 25).map((id) =>
+        listOutreachCampaignParticipants({
+          outreach_campaign_id: id,
+          org_id: orgId,
+          limit: 500,
+        }).catch(() => [] as OutreachCampaignParticipantRow[]),
+      ),
+    )
+    const all = batches.flat()
+    if (all.length > 0) {
+      dispatch({ type: 'MERGE_OUTREACH_PARTICIPANTS', participants: all })
+    }
+  }, [])
+
   const doLiveSync = useCallback(async () => {
     const orgId = resolveOrgId()
     try {
@@ -3312,6 +3462,9 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: null })
+      void refreshCampaignParticipants().catch(() => {
+        /* participant sync is best-effort */
+      })
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message
       dispatch({ type: 'SET_LIVE_SYNCED', ts: nowIso(), error: msg })
@@ -3335,7 +3488,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         /* Gmail sync errors are non-fatal */
       }
     }
-  }, [])
+  }, [refreshCampaignParticipants])
 
   const refreshOutreachTemplates = useCallback(async () => {
     const org = resolveOrgId()
@@ -3402,11 +3555,27 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       if (payload.email) {
+        const emailAcc =
+          st.emailAccounts.find((a) => a.id === payload.email!.emailAccountId) ??
+          st.emailAccounts.find((a) => a.provider === 'gmail')
         const gmailChannels = await listOutreachChannels({
           org_id: resolveOrgId(),
           medium: 'gmail',
         })
-        const gmailCh = gmailChannels[0]
+        const fromEmail = emailAcc?.fromEmail?.toLowerCase() || ''
+        const gmailCh =
+          gmailChannels.find((ch) => ch.outreach_channel_id === emailAcc?.id) ??
+          (fromEmail
+            ? gmailChannels.find(
+                (ch) =>
+                  (ch.email_address || ch.account_address || '').toLowerCase() ===
+                  fromEmail,
+              )
+            : undefined) ??
+          (emailAcc?.userId
+            ? gmailChannels.find((ch) => ch.user_id === emailAcc.userId)
+            : undefined) ??
+          gmailChannels[0]
         if (gmailCh?.outreach_channel_id) {
           channels.push({
             medium: 'gmail',
@@ -3421,9 +3590,15 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
         throw new Error('No connected channels configured for send')
       }
 
+      const influencerIds =
+        payload.influencerIds && payload.influencerIds.length > 0
+          ? payload.influencerIds
+          : undefined
+
       const summary = await sendOutreachCampaign({
         outreach_campaign_id: payload.campaignId,
         org_id: resolveOrgId(),
+        influencer_ids: influencerIds,
         channels,
       })
 
@@ -3646,6 +3821,13 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       .then((rows) => {
         if (!cancelled) {
           dispatch({ type: 'HYDRATE_OUTREACH_CAMPAIGNS', campaigns: rows })
+          if (rows.length > 0) {
+            void refreshCampaignParticipants(rows.map((r) => r.outreach_campaign_id)).catch(
+              () => {
+                /* participant sync is best-effort */
+              },
+            )
+          }
         }
       })
       .catch(() => {
@@ -3955,8 +4137,59 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       setInboxFilters: (patch) => dispatch({ type: 'SET_INBOX_FILTERS', patch }),
       resetInboxFilters: () => dispatch({ type: 'RESET_INBOX_FILTERS' }),
       setDetailCampaign: (id) => dispatch({ type: 'SET_DETAIL_CAMPAIGN', campaignId: id }),
-      setConversationIntent: (conversationId, intent) =>
-        dispatch({ type: 'SET_CONVERSATION_INTENT', conversationId, intent }),
+      setConversationIntent: (conversationId, intent, campaignId) => {
+        dispatch({ type: 'SET_CONVERSATION_INTENT', conversationId, intent, campaignId })
+        const cur = stateRef.current
+        const conv = cur.conversations.find((c) => c.id === conversationId)
+        const cid =
+          campaignId ??
+          cur.selectedInboxCampaignId ??
+          conv?.lastCampaignId ??
+          null
+        if (
+          !cid ||
+          cid === AD_HOC_CAMPAIGN_ID ||
+          !conv?.influencerId ||
+          !cur.campaigns.some((c) => c.id === cid && c.source === 'db')
+        ) {
+          return
+        }
+        void patchOutreachCampaignParticipant({
+          outreach_campaign_id: cid,
+          influencer_id: conv.influencerId,
+          conversation_intent: intent,
+          org_id: resolveOrgId(),
+        })
+          .then((row) => {
+            if (row) {
+              dispatch({ type: 'MERGE_OUTREACH_PARTICIPANTS', participants: [row] })
+            }
+          })
+          .catch(() => {
+            /* optimistic local update already applied */
+          })
+      },
+      setParticipantTags: (campaignId, influencerId, tags) => {
+        if (campaignId === AD_HOC_CAMPAIGN_ID) return
+        dispatch({ type: 'SET_PARTICIPANT_TAGS', campaignId, influencerId, tags })
+        if (!stateRef.current.campaigns.some((c) => c.id === campaignId && c.source === 'db')) {
+          return
+        }
+        void patchOutreachCampaignParticipant({
+          outreach_campaign_id: campaignId,
+          influencer_id: influencerId,
+          tags,
+          org_id: resolveOrgId(),
+        })
+          .then((row) => {
+            if (row) {
+              dispatch({ type: 'MERGE_OUTREACH_PARTICIPANTS', participants: [row] })
+            }
+          })
+          .catch(() => {
+            /* optimistic local update already applied */
+          })
+      },
       toast,
       dismissToast: (id) => dispatch({ type: 'DISMISS_TOAST', id }),
       openConnect: (open, kind) => dispatch({ type: 'OPEN_CONNECT', open, kind }),
@@ -4077,6 +4310,8 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
             audience_type: audienceType,
             audience_ref_id: payload.collectionId ?? undefined,
             org_id: resolveOrgId(),
+            ai_objective: payload.aiObjective || 'gauge_interest',
+            ai_mode: payload.aiMode || 'assist',
           })
           if (row) {
             dispatch({ type: 'MERGE_OUTREACH_CAMPAIGNS', campaigns: [row] })
@@ -4119,6 +4354,31 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       },
       setLivePolling: (polling) => dispatch({ type: 'SET_LIVE_POLLING', polling }),
       syncLiveInboxNow: () => doLiveSync(),
+      syncCampaignParticipants: (campaignIds) => refreshCampaignParticipants(campaignIds),
+      updateCampaignAiSettings: async (campaignId, patch) => {
+        dispatch({
+          type: 'PATCH_CAMPAIGN_AI',
+          campaignId,
+          aiObjective: patch.aiObjective,
+          aiMode: patch.aiMode,
+        })
+        const campaign = stateRef.current.campaigns.find((c) => c.id === campaignId)
+        if (campaign?.source !== 'db') return
+        try {
+          const row = await updateOutreachCampaign({
+            outreach_campaign_id: campaignId,
+            org_id: resolveOrgId(),
+            ai_objective: patch.aiObjective,
+            ai_mode: patch.aiMode,
+          })
+          if (row) {
+            dispatch({ type: 'MERGE_OUTREACH_CAMPAIGNS', campaigns: [row] })
+            toast('Campaign AI settings saved', 'success')
+          }
+        } catch (e) {
+          toast(e instanceof ApiError ? e.message : 'Could not save AI settings', 'error')
+        }
+      },
       sendWhatsAppReplyLive,
       sendGmailReplyLive,
       setTheme: (theme) => dispatch({ type: 'SET_THEME', theme }),
@@ -4168,6 +4428,7 @@ export function WhatsAppStoreProvider({ children }: { children: ReactNode }) {
       renderPreview,
       state.channels,
       doLiveSync,
+      refreshCampaignParticipants,
       sendWhatsAppReplyLive,
       sendGmailReplyLive,
     ],

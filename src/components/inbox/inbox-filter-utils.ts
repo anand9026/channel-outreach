@@ -23,7 +23,7 @@ export function conversationPassesInboxFilters(
     return false
   }
   if (filters.tags.length > 0) {
-    const labels = conv.labels || []
+    const labels = row.labels?.length ? row.labels : conv.labels || []
     if (!filters.tags.some((t) => labels.includes(t))) return false
   }
   return true

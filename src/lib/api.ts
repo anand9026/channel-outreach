@@ -1,3 +1,5 @@
+import type { ConversationIntent } from '../types'
+
 const DEFAULT_BASE = 'https://api.dev.getreelax.com'
 const DEFAULT_GMAIL_USER_ID = 'demo_user'
 const DEFAULT_GMAIL_CHANNEL_ID = 'default'
@@ -244,8 +246,35 @@ export type GmailThreadMessage = {
   internal_date: string
 }
 
-export function whatsappMediaUrl(mediaId: string) {
-  return `${API_BASE_URL}/whatsapp-outreach/media/${encodeURIComponent(mediaId)}`
+export function whatsappMediaUrl(mediaId: string, orgId?: string) {
+  const q = orgId ? `?org_id=${encodeURIComponent(orgId)}` : ''
+  return `${API_BASE_URL}/whatsapp-outreach/media/${encodeURIComponent(mediaId)}${q}`
+}
+
+export async function uploadWhatsAppTemplateMedia(input: {
+  mime_type: string
+  file_base64?: string
+  source_url?: string
+  file_name?: string
+  org_id?: string
+  phone_number_id?: string
+  waba_id?: string
+}) {
+  const res = await request<
+    ApiSuccess<{ handle?: string; mime_type?: string; file_size?: number }>
+  >('/whatsapp-outreach/templates/upload-media', {
+    method: 'POST',
+    body: JSON.stringify({
+      org_id: resolveOrgId(input.org_id),
+      phone_number_id: input.phone_number_id,
+      waba_id: input.waba_id,
+      mime_type: input.mime_type,
+      file_name: input.file_name,
+      file_base64: input.file_base64,
+      source_url: input.source_url,
+    }),
+  })
+  return res.data
 }
 
 export type MetaTemplate = {
@@ -766,6 +795,14 @@ export type OutreachCollectionRow = {
   date_modified?: string | null
 }
 
+export type CampaignAiObjective =
+  | 'collect_pricing'
+  | 'gauge_interest'
+  | 'negotiate'
+  | 'confirm_booking'
+
+export type CampaignAiMode = 'auto' | 'assist' | 'off'
+
 export type OutreachCampaignRow = {
   outreach_campaign_id: string
   org_id: string
@@ -773,6 +810,8 @@ export type OutreachCampaignRow = {
   platform_campaign_id?: string | null
   name: string
   description?: string | null
+  ai_objective?: CampaignAiObjective
+  ai_mode?: CampaignAiMode
   kind: 'outreach' | 'marketing'
   status: string
   audience_type: string
@@ -816,6 +855,25 @@ export type OutreachConversationRow = {
   unread_count: number
   channels: string[]
   threads: OutreachThreadRow[]
+}
+
+export type OutreachCampaignParticipantRow = {
+  outreach_campaign_participant_id: string
+  org_id: string
+  outreach_campaign_id: string
+  influencer_id: string
+  send_status?: string
+  first_sent_at?: string | null
+  first_replied_at?: string | null
+  conversation_intent?: ConversationIntent | null
+  intent_confidence?: number | null
+  intent_source?: 'ai' | 'manual'
+  extracted_pricing?: { amount?: number; currency?: string; notes?: string | null } | null
+  outcome?: string
+  objective_met?: number
+  tags?: string[]
+  ai_summary?: string | null
+  last_classified_at?: string | null
 }
 
 export async function listOutreachChannels(input?: {
@@ -949,6 +1007,8 @@ export async function updateOutreachCampaign(input: {
   read_count?: number
   replied_count?: number
   recipient_count?: number
+  ai_objective?: CampaignAiObjective
+  ai_mode?: CampaignAiMode
 }) {
   const res = await request<ApiSuccess<OutreachCampaignRow>>(
     '/outreach/campaigns/update',
@@ -964,6 +1024,8 @@ export async function updateOutreachCampaign(input: {
         read_count: input.read_count,
         replied_count: input.replied_count,
         recipient_count: input.recipient_count,
+        ai_objective: input.ai_objective,
+        ai_mode: input.ai_mode,
       }),
     },
   )
@@ -1016,6 +1078,8 @@ export async function createOutreachCampaign(input: {
   brand_id?: string
   platform_campaign_id?: string
   description?: string
+  ai_objective?: CampaignAiObjective
+  ai_mode?: CampaignAiMode
   created_by_user_id?: string
   org_id?: string
 }) {
@@ -1031,6 +1095,8 @@ export async function createOutreachCampaign(input: {
       brand_id: input.brand_id,
       platform_campaign_id: input.platform_campaign_id,
       description: input.description,
+      ai_objective: input.ai_objective || 'gauge_interest',
+      ai_mode: input.ai_mode || 'assist',
       created_by_user_id: input.created_by_user_id || 'system',
     }),
   })
@@ -1051,6 +1117,7 @@ export type OutreachCampaignSendSummary = {
 export async function sendOutreachCampaign(input: {
   outreach_campaign_id: string
   org_id?: string
+  influencer_ids?: string[]
   channels?: Array<{
     medium: 'whatsapp' | 'gmail' | 'email'
     outreach_channel_id: string
@@ -1065,11 +1132,36 @@ export async function sendOutreachCampaign(input: {
       body: JSON.stringify({
         org_id: resolveOrgId(input.org_id),
         outreach_campaign_id: input.outreach_campaign_id,
+        influencer_ids: input.influencer_ids,
         channels: input.channels,
       }),
     },
   )
   return res.data
+}
+
+export async function upsertOutreachCampaignChannels(input: {
+  outreach_campaign_id: string
+  org_id?: string
+  channels: Array<{
+    medium: 'whatsapp' | 'gmail' | 'email'
+    outreach_channel_id: string
+    outreach_template_id: string
+    variable_mapping?: Record<string, string>
+  }>
+}) {
+  const res = await request<ApiSuccess<{ channels?: OutreachChannelRow[] }>>(
+    '/outreach/campaigns/channels/update',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
+        outreach_campaign_id: input.outreach_campaign_id,
+        channels: input.channels,
+      }),
+    },
+  )
+  return res.data?.channels ?? []
 }
 
 export async function listOutreachThreads(input?: {
@@ -1139,4 +1231,48 @@ export async function createOutreachThreadLink(input: {
     },
   )
   return res.data
+}
+
+export async function listOutreachCampaignParticipants(input: {
+  outreach_campaign_id: string
+  org_id?: string
+  outcome?: string
+  conversation_intent?: ConversationIntent
+  limit?: number
+}) {
+  const q = withOrgParams({ org_id: input.org_id })
+  q.set('outreach_campaign_id', input.outreach_campaign_id)
+  if (input.outcome) q.set('outcome', input.outcome)
+  if (input.conversation_intent) q.set('conversation_intent', input.conversation_intent)
+  if (input.limit) q.set('limit', String(input.limit))
+  const res = await request<ApiSuccess<{ participants?: OutreachCampaignParticipantRow[] }>>(
+    `/outreach/campaigns/participants?${q.toString()}`,
+  )
+  return res.data?.participants ?? []
+}
+
+export async function patchOutreachCampaignParticipant(input: {
+  outreach_campaign_id: string
+  influencer_id: string
+  org_id?: string
+  conversation_intent?: ConversationIntent | null
+  tags?: string[]
+  outcome?: string
+}) {
+  const res = await request<ApiSuccess<{ participant?: OutreachCampaignParticipantRow }>>(
+    '/outreach/campaigns/participants/update',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        org_id: resolveOrgId(input.org_id),
+        outreach_campaign_id: input.outreach_campaign_id,
+        influencer_id: input.influencer_id,
+        conversation_intent: input.conversation_intent,
+        intent: input.conversation_intent,
+        tags: input.tags,
+        outcome: input.outcome,
+      }),
+    },
+  )
+  return res.data?.participant
 }

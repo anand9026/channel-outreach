@@ -1,6 +1,30 @@
-import type { Conversation, InboxCampaignRow, Message, OutreachChannel } from '../../types'
+import type {
+  Campaign,
+  Conversation,
+  ConversationIntent,
+  InboxCampaignRow,
+  Message,
+  OutreachChannel,
+} from '../../types'
 import { AD_HOC_CAMPAIGN_ID } from '../../types'
 import { sanitizePreview } from './inbox-conversation-utils'
+
+export type CampaignParticipantIndex = Record<
+  string,
+  {
+    conversation_intent?: ConversationIntent | null
+    tags?: string[]
+    extracted_pricing?: { amount?: number; currency?: string; notes?: string | null } | null
+    outcome?: string
+    intent_source?: 'ai' | 'manual'
+    intent_confidence?: number | null
+    ai_summary?: string | null
+  }
+>
+
+export function participantIndexKey(campaignId: string, influencerId: string): string {
+  return `${campaignId}::${influencerId}`
+}
 
 function uniqueChannels(channels: OutreachChannel[]): OutreachChannel[] {
   return channels.filter((c, i, arr) => arr.indexOf(c) === i)
@@ -35,7 +59,10 @@ function messagesForCampaignScope(
 export function expandToInboxCampaignRows(
   conversations: Conversation[],
   messages: Message[],
+  participantIndex: CampaignParticipantIndex = {},
+  campaigns: Campaign[] = [],
 ): InboxCampaignRow[] {
+  const campaignById = new Map(campaigns.map((c) => [c.id, c]))
   const rows: InboxCampaignRow[] = []
 
   for (const c of conversations) {
@@ -60,6 +87,13 @@ export function expandToInboxCampaignRows(
         campaignId === campaignIds[campaignIds.length - 1] ||
         campaignIds.length === 1
 
+      const participant =
+        participantIndex[participantIndexKey(campaignId, c.influencerId)]
+      const participantTags = Array.isArray(participant?.tags)
+        ? participant.tags.filter(Boolean)
+        : []
+      const campaign = campaignById.get(campaignId)
+
       rows.push({
         rowId: `${c.id}::${campaignId}`,
         conversationId: c.id,
@@ -71,8 +105,12 @@ export function expandToInboxCampaignRows(
         lastMessageAt: lastAt,
         lastPreview: preview,
         unreadCount: isPrimaryRow ? c.unreadCount : 0,
-        labels: c.labels,
-        intent: c.intent,
+        labels: participantTags.length ? participantTags : c.labels,
+        intent: participant?.conversation_intent || c.intent,
+        aiObjective: campaign?.aiObjective,
+        aiMode: campaign?.aiMode,
+        extractedPricing: participant?.extracted_pricing ?? null,
+        outcome: participant?.outcome,
         isCreator: c.isCreator,
         contactName: c.contactName,
         outreachConversationId: c.outreachConversationId,

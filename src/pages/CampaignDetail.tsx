@@ -5,7 +5,12 @@ import { SendDrawer } from '../components/SendDrawer'
 import { expandToInboxCampaignRows } from '../components/inbox/inbox-campaign-rows'
 import { campaignKanbanColumn, campaignStatusLabel } from '../components/campaigns/campaign-lifecycle'
 import { getOutreachCampaign, resolveOrgId, type OutreachCampaignRow } from '../lib/api'
+import {
+  AI_MODE_LABELS,
+  AI_OBJECTIVE_LABELS,
+} from '../lib/outreach-scope'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
+import type { CampaignAiMode, CampaignAiObjective } from '../types'
 
 type DetailTab = 'overview' | 'messages' | 'conversations' | 'reports' | 'settings'
 
@@ -59,10 +64,19 @@ export function CampaignDetail({
   )
 
   const inboxRows = useMemo(() => {
-    return expandToInboxCampaignRows(state.conversations, state.messages).filter(
-      (r) => r.campaignId === campaignId,
-    )
-  }, [state.conversations, state.messages, campaignId])
+    return expandToInboxCampaignRows(
+      state.conversations,
+      state.messages,
+      state.campaignParticipantIndex,
+      state.campaigns,
+    ).filter((r) => r.campaignId === campaignId)
+  }, [state.conversations, state.messages, state.campaignParticipantIndex, campaignId])
+
+  useEffect(() => {
+    if (campaign?.source !== 'db') return
+    void actions.syncCampaignParticipants([campaignId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, campaign?.source, tab])
 
   if (!campaign) {
     return (
@@ -84,6 +98,8 @@ export function CampaignDetail({
   const brand = state.brands.find((b) => b.id === campaign.brandId)
   const lifecycle = campaignStatusLabel(campaign)
   const channels = state.channels.filter((ch) => ch.campaignId === campaignId)
+  const aiObjective = campaign.aiObjective || dbRow?.ai_objective || 'gauge_interest'
+  const aiMode = campaign.aiMode || dbRow?.ai_mode || 'assist'
 
   const openInbox = (rowCampaignId?: string) => {
     actions.setInboxCampaignFilter(rowCampaignId || campaignId)
@@ -104,6 +120,8 @@ export function CampaignDetail({
             <span>{brand?.name || 'Org-level'}</span>
             <span>·</span>
             <span>{campaign.influencerIds.length || campaign.recipientCount || 0} creators</span>
+            <span>·</span>
+            <span>{AI_OBJECTIVE_LABELS[aiObjective]}</span>
             {campaign.source === 'db' ? (
               <>
                 <span>·</span>
@@ -164,6 +182,15 @@ export function CampaignDetail({
               <FunnelRow label="Sent" value={totalSent} />
               <FunnelRow label="Delivered" value={totalDelivered} />
               <FunnelRow label="Replied" value={totalReplies} />
+            </div>
+            <div className="rx-card">
+              <div className="rx-section-title">AI tracking</div>
+              <dl className="rx-dl">
+                <dt>Objective</dt>
+                <dd>{AI_OBJECTIVE_LABELS[aiObjective]}</dd>
+                <dt>Mode</dt>
+                <dd>{aiMode}</dd>
+              </dl>
             </div>
             <div className="rx-card">
               <div className="rx-section-title">Channels</div>
@@ -232,6 +259,7 @@ export function CampaignDetail({
                   <th>Creator</th>
                   <th>Channels</th>
                   <th>Intent</th>
+                  <th>Tags</th>
                   <th>Unread</th>
                   <th>Last message</th>
                 </tr>
@@ -255,6 +283,7 @@ export function CampaignDetail({
                       </td>
                       <td>{row.channels.join(', ')}</td>
                       <td>{row.intent || '—'}</td>
+                      <td>{row.labels?.length ? row.labels.join(', ') : '—'}</td>
                       <td>{row.unreadCount || '—'}</td>
                       <td className="rx-muted">{row.lastPreview?.slice(0, 60)}</td>
                     </tr>
@@ -292,6 +321,52 @@ export function CampaignDetail({
             <dt>Created</dt>
             <dd>{new Date(campaign.createdAt).toLocaleString()}</dd>
           </dl>
+          <div className="rx-section-title rx-mt-4">AI scope</div>
+          <p className="rx-text-sm rx-muted rx-mb-2">
+            Intent, tags, and reply suggestions are tracked per creator within this campaign.
+          </p>
+          <div className="form-grid-2">
+            <label className="field">
+              <span>Objective</span>
+              <select
+                value={aiObjective}
+                disabled={campaign.source !== 'db'}
+                onChange={(e) => {
+                  void actions.updateCampaignAiSettings(campaignId, {
+                    aiObjective: e.target.value as CampaignAiObjective,
+                  })
+                }}
+              >
+                {(Object.entries(AI_OBJECTIVE_LABELS) as Array<[CampaignAiObjective, string]>).map(
+                  ([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <label className="field">
+              <span>Mode</span>
+              <select
+                value={aiMode}
+                disabled={campaign.source !== 'db'}
+                onChange={(e) => {
+                  void actions.updateCampaignAiSettings(campaignId, {
+                    aiMode: e.target.value as CampaignAiMode,
+                  })
+                }}
+              >
+                {(Object.entries(AI_MODE_LABELS) as Array<[CampaignAiMode, string]>).map(
+                  ([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+          </div>
           <div className="rx-row rx-mt-4" style={{ gap: 8 }}>
             {campaignKanbanColumn(campaign) === 'running' ? (
               <button type="button" className="rx-btn secondary sm">

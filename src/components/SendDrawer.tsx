@@ -280,8 +280,16 @@ export function SendDrawer({ open, onClose, presetCampaignId, presetName }: Prop
 
         if (whatsapp || email) {
           try {
+            const camp = state.campaigns.find((c) => c.id === campId)
+            const influencerIds =
+              camp?.influencerIds && camp.influencerIds.length > 0
+                ? camp.influencerIds
+                : s.audience.length > 0
+                  ? s.audience
+                  : undefined
             const { sent, failed } = await actions.sendOutreachCampaignLive({
               campaignId: campId,
+              influencerIds,
               whatsapp,
               email,
             })

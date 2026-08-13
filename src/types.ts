@@ -201,6 +201,14 @@ export function collectionCreatorCount(c: CollectionList): number {
 export type AudienceSource = 'campaign_roster' | 'collection' | 'my_creators'
 export type CampaignKind = 'marketing' | 'outreach'
 
+export type CampaignAiObjective =
+  | 'collect_pricing'
+  | 'gauge_interest'
+  | 'negotiate'
+  | 'confirm_booking'
+
+export type CampaignAiMode = 'auto' | 'assist' | 'off'
+
 export interface Campaign {
   id: string
   organizationId: string
@@ -221,6 +229,8 @@ export interface Campaign {
   failedCount?: number
   recipientCount?: number
   description?: string | null
+  aiObjective?: CampaignAiObjective
+  aiMode?: CampaignAiMode
   source?: 'db' | 'local'
 }
 
@@ -369,6 +379,11 @@ export interface InboxCampaignRow {
   unreadCount: number
   labels?: string[]
   intent?: ConversationIntent
+  /** Campaign AI config surfaced on each inbox row */
+  aiObjective?: CampaignAiObjective
+  aiMode?: CampaignAiMode
+  extractedPricing?: { amount?: number; currency?: string; notes?: string | null } | null
+  outcome?: string
   isCreator?: boolean
   contactName?: string
   outreachConversationId?: string

@@ -6,11 +6,12 @@ import {
   Plus,
   Reply,
   Trash2,
+  Upload,
   Video as VideoIcon,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { ApiError, createGmailTemplate, createWhatsAppTemplate } from '../lib/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, createGmailTemplate, createWhatsAppTemplate, uploadWhatsAppTemplateMedia } from '../lib/api'
 import { extractMetaSlots } from '../lib/templateSlots'
 import { toMetaBody, toMetaTemplateName } from '../lib/metaTemplate'
 import {
@@ -61,6 +62,25 @@ type Props = {
 let uidCounter = 0
 const uid = (p: string) => `${p}_${Date.now().toString(36)}_${++uidCounter}`
 
+function defaultMimeForHeader(kind: HeaderKind): string {
+  if (kind === 'video') return 'video/mp4'
+  if (kind === 'document') return 'application/pdf'
+  return 'image/jpeg'
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const raw = String(reader.result || '')
+      const idx = raw.indexOf('base64,')
+      resolve(idx >= 0 ? raw.slice(idx + 7) : raw)
+    }
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
 export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   const { state, actions } = useWhatsAppStore()
   const waOptions = useMemo(
@@ -100,6 +120,9 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   const [headerKind, setHeaderKind] = useState<HeaderKind>('none')
   const [headerText, setHeaderText] = useState('')
   const [headerMediaUrl, setHeaderMediaUrl] = useState('')
+  const [headerMediaFile, setHeaderMediaFile] = useState<File | null>(null)
+  const [headerMediaPreview, setHeaderMediaPreview] = useState<string | null>(null)
+  const headerFileRef = useRef<HTMLInputElement | null>(null)
 
   // Body
   const [body, setBody] = useState('Hello {{1}}, thanks for connecting with us.')
@@ -125,6 +148,16 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     [body, samples],
   )
 
+  useEffect(() => {
+    if (!headerMediaFile) {
+      setHeaderMediaPreview(null)
+      return
+    }
+    const url = URL.createObjectURL(headerMediaFile)
+    setHeaderMediaPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [headerMediaFile])
+
   if (!open) return null
 
   const reset = () => {
@@ -135,6 +168,9 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     setHeaderKind('none')
     setHeaderText('')
     setHeaderMediaUrl('')
+    setHeaderMediaFile(null)
+    setHeaderMediaPreview(null)
+    if (headerFileRef.current) headerFileRef.current.value = ''
     setBody('Hello {{1}}, thanks for connecting with us.')
     setSamples({ '1': 'Priya' })
     setFooter('')
@@ -163,7 +199,9 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     ])
   }
 
-  const buildMetaComponents = (): Array<Record<string, unknown>> | null => {
+  const buildMetaComponents = (
+    headerHandle?: string,
+  ): Array<Record<string, unknown>> | null => {
     const components: Array<Record<string, unknown>> = []
 
     // HEADER
@@ -186,21 +224,15 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
       }
       components.push(comp)
     } else if (headerKind === 'image' || headerKind === 'video' || headerKind === 'document') {
-      const url = headerMediaUrl.trim()
-      if (!url) {
-        actions.toast(`Header ${headerKind} URL is required`, 'error')
+      const handle = (headerHandle || '').trim()
+      if (!handle) {
+        actions.toast(`Upload a ${headerKind} file or paste a URL`, 'error')
         return null
       }
-      const key =
-        headerKind === 'image'
-          ? 'header_handle'
-          : headerKind === 'video'
-            ? 'header_handle'
-            : 'header_handle'
       components.push({
         type: 'HEADER',
         format: headerKind.toUpperCase(),
-        example: { [key]: [url] },
+        example: { header_handle: [handle] },
       })
     }
 
@@ -277,11 +309,50 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
         actions.toast('Invalid template name (lowercase, underscores only)', 'error')
         return
       }
-      const components = buildMetaComponents()
-      if (!components) return
 
       setSubmitting(true)
       try {
+        let headerHandle: string | undefined
+        if (headerKind === 'image' || headerKind === 'video' || headerKind === 'document') {
+          if (headerMediaFile) {
+            const maxMb = headerKind === 'video' ? 16 : 5
+            if (headerMediaFile.size > maxMb * 1024 * 1024) {
+              actions.toast(`File must be under ${maxMb}MB`, 'error')
+              setSubmitting(false)
+              return
+            }
+            actions.toast('Uploading header media to Meta…', 'info')
+            const uploaded = await uploadWhatsAppTemplateMedia({
+              mime_type: headerMediaFile.type || defaultMimeForHeader(headerKind),
+              file_base64: await fileToBase64(headerMediaFile),
+              file_name: headerMediaFile.name,
+              phone_number_id: selectedWa.phoneNumberId,
+              waba_id: selectedWa.wabaId || undefined,
+            })
+            headerHandle = uploaded?.handle
+          } else if (headerMediaUrl.trim()) {
+            actions.toast('Uploading header media from URL…', 'info')
+            const uploaded = await uploadWhatsAppTemplateMedia({
+              mime_type: defaultMimeForHeader(headerKind),
+              source_url: headerMediaUrl.trim(),
+              phone_number_id: selectedWa.phoneNumberId,
+              waba_id: selectedWa.wabaId || undefined,
+            })
+            headerHandle = uploaded?.handle
+          }
+          if (!headerHandle) {
+            actions.toast(`Upload a ${headerKind} file or paste a URL`, 'error')
+            setSubmitting(false)
+            return
+          }
+        }
+
+        const components = buildMetaComponents(headerHandle)
+        if (!components) {
+          setSubmitting(false)
+          return
+        }
+
         await createWhatsAppTemplate({
           name: metaName,
           category,
@@ -502,7 +573,12 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
                         <button
                           key={k}
                           className={`rx-seg-btn${headerKind === k ? ' is-active' : ''}`}
-                          onClick={() => setHeaderKind(k)}
+                          onClick={() => {
+                            setHeaderKind(k)
+                            setHeaderMediaFile(null)
+                            setHeaderMediaUrl('')
+                            if (headerFileRef.current) headerFileRef.current.value = ''
+                          }}
                           data-testid={`header-${k}`}
                         >
                           {k === 'none' ? 'None' : k[0].toUpperCase() + k.slice(1)}
@@ -522,21 +598,62 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
                   {headerKind !== 'none' && headerKind !== 'text' && (
                     <div className="rx-col rx-gap">
                       <input
+                        ref={headerFileRef}
+                        type="file"
+                        accept={
+                          headerKind === 'image'
+                            ? 'image/jpeg,image/png,image/webp'
+                            : headerKind === 'video'
+                              ? 'video/mp4,video/3gpp'
+                              : 'application/pdf,.pdf'
+                        }
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          const maxMb = headerKind === 'video' ? 16 : 5
+                          if (file.size > maxMb * 1024 * 1024) {
+                            actions.toast(`File must be under ${maxMb}MB`, 'error')
+                            e.target.value = ''
+                            return
+                          }
+                          setHeaderMediaFile(file)
+                          setHeaderMediaUrl('')
+                        }}
+                      />
+                      <div className="rx-row rx-gap" style={{ alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="rx-btn sm ghost"
+                          onClick={() => headerFileRef.current?.click()}
+                        >
+                          <Upload size={14} />{' '}
+                          {headerMediaFile ? 'Change file' : `Upload ${headerKind}`}
+                        </button>
+                        {headerMediaFile ? (
+                          <span className="rx-text-xs rx-muted">{headerMediaFile.name}</span>
+                        ) : null}
+                      </div>
+                      <div className="rx-text-xs rx-muted">or paste a public URL</div>
+                      <input
                         className="rx-input"
                         value={headerMediaUrl}
-                        onChange={(e) => setHeaderMediaUrl(e.target.value)}
+                        onChange={(e) => {
+                          setHeaderMediaUrl(e.target.value)
+                          if (e.target.value.trim()) setHeaderMediaFile(null)
+                        }}
                         placeholder={
                           headerKind === 'image'
-                            ? 'https://\u2026/image.jpg'
+                            ? 'https://…/image.jpg'
                             : headerKind === 'video'
-                              ? 'https://\u2026/video.mp4'
-                              : 'https://\u2026/document.pdf'
+                              ? 'https://…/video.mp4'
+                              : 'https://…/document.pdf'
                         }
                       />
                       <div className="rx-text-xs rx-muted">
-                        <Info size={11} style={{ verticalAlign: -1 }} /> Meta requires an
-                        example media URL during review {'\u2014'} the real media is bound per
-                        send.
+                        <Info size={11} style={{ verticalAlign: -1 }} /> Meta needs a sample
+                        file for review. We upload it to Meta and use the returned handle in your
+                        template.
                       </div>
                     </div>
                   )}
@@ -793,8 +910,14 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
               ) : null}
               {channel === 'whatsapp' && headerKind === 'image' && (
                 <div className="rx-tpl-pv-header media">
-                  {headerMediaUrl ? (
-                    <img src={headerMediaUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                  {headerMediaPreview || headerMediaUrl ? (
+                    <img
+                      src={headerMediaPreview || headerMediaUrl}
+                      alt=""
+                      onError={(e) => {
+                        ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                      }}
+                    />
                   ) : (
                     <div className="rx-tpl-pv-placeholder"><ImageIcon size={22} /> Image</div>
                   )}
@@ -802,12 +925,17 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
               )}
               {channel === 'whatsapp' && headerKind === 'video' && (
                 <div className="rx-tpl-pv-header media">
-                  <div className="rx-tpl-pv-placeholder"><VideoIcon size={22} /> Video</div>
+                  {headerMediaPreview ? (
+                    <video src={headerMediaPreview} controls preload="metadata" />
+                  ) : (
+                    <div className="rx-tpl-pv-placeholder"><VideoIcon size={22} /> Video</div>
+                  )}
                 </div>
               )}
               {channel === 'whatsapp' && headerKind === 'document' && (
                 <div className="rx-tpl-pv-header doc">
-                  {'\u{1F4C4}'} Document.pdf
+                  {'\u{1F4C4}'}{' '}
+                  {headerMediaFile?.name || 'Document.pdf'}
                 </div>
               )}
 
