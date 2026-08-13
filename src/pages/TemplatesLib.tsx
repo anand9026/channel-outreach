@@ -15,6 +15,10 @@ import {
   type OutreachTemplateRow,
 } from '../lib/api'
 import { formatOutreachTimestamp } from '../lib/outreach-timestamp'
+import {
+  labelWhatsAppAccount,
+  whatsAppAccountOptions,
+} from '../lib/whatsapp-account-options'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 
 type Row = {
@@ -94,11 +98,34 @@ export function TemplatesLib() {
   const [registryLoading, setRegistryLoading] = useState(false)
   const [registryError, setRegistryError] = useState<string | null>(null)
 
-  const loadMeta = async () => {
+  const waOptions = useMemo(
+    () => whatsAppAccountOptions(state.whatsAppNumbers),
+    [state.whatsAppNumbers],
+  )
+  const [metaAccountPhoneId, setMetaAccountPhoneId] = useState('')
+
+  const selectedMetaWa =
+    waOptions.find((n) => n.phoneNumberId === metaAccountPhoneId) || waOptions[0]
+
+  useEffect(() => {
+    if (waOptions.length === 0) return
+    setMetaAccountPhoneId((prev) => {
+      if (prev && waOptions.some((n) => n.phoneNumberId === prev)) return prev
+      return waOptions[0].phoneNumberId
+    })
+  }, [waOptions])
+
+  const loadMeta = async (account?: typeof selectedMetaWa) => {
+    const wa = account || selectedMetaWa
     setMetaLoading(true)
     setMetaError(null)
     try {
-      const res = await listWhatsAppTemplates({ limit: 100 })
+      const res = await listWhatsAppTemplates({
+        limit: 100,
+        org_id: resolveOrgId(),
+        phone_number_id: wa?.phoneNumberId,
+        waba_id: wa?.wabaId || undefined,
+      })
       setMetaTemplates(res)
       try {
         await syncOutreachWhatsAppTemplates({
@@ -236,6 +263,22 @@ export function TemplatesLib() {
         subtitle="Versioned library across WhatsApp and email — preview, duplicate, and reuse in campaigns."
         actions={
           <>
+            {waOptions.length > 1 ? (
+              <select
+                className="rx-select"
+                style={{ maxWidth: 280 }}
+                value={metaAccountPhoneId}
+                onChange={(e) => setMetaAccountPhoneId(e.target.value)}
+                aria-label="WhatsApp account for Meta sync"
+                data-testid="templates-wa-account"
+              >
+                {waOptions.map((n) => (
+                  <option key={n.phoneNumberId} value={n.phoneNumberId}>
+                    {labelWhatsAppAccount(n)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <button
               type="button"
               className="rx-btn secondary"

@@ -317,14 +317,18 @@ export async function listWhatsAppTemplates(params?: {
   name?: string
   status?: string
   limit?: number
+  org_id?: string
+  phone_number_id?: string
+  waba_id?: string
 }) {
-  const q = new URLSearchParams()
+  const q = withOrgParams({ org_id: params?.org_id })
   if (params?.name) q.set('name', params.name)
   if (params?.status) q.set('status', params.status)
   if (params?.limit) q.set('limit', String(params.limit))
-  const qs = q.toString()
+  if (params?.phone_number_id) q.set('phone_number_id', params.phone_number_id)
+  if (params?.waba_id) q.set('waba_id', params.waba_id)
   const res = await request<ApiSuccess<{ data?: MetaTemplate[] }>>(
-    `/whatsapp-outreach/templates${qs ? `?${qs}` : ''}`,
+    `/whatsapp-outreach/templates?${q.toString()}`,
   )
   return res.data?.data ?? []
 }
@@ -335,6 +339,9 @@ export async function createWhatsAppTemplate(input: {
   category?: string
   body: string
   exampleValues?: string[]
+  org_id?: string
+  phone_number_id?: string
+  waba_id?: string
   /**
    * Optional richer components. When supplied, `components` fully replaces
    * the auto-generated BODY block. Use this to send HEADER / FOOTER / BUTTONS
@@ -342,6 +349,12 @@ export async function createWhatsAppTemplate(input: {
    */
   components?: Array<Record<string, unknown>>
 }) {
+  const accountPayload = {
+    org_id: resolveOrgId(input.org_id),
+    phone_number_id: input.phone_number_id,
+    waba_id: input.waba_id,
+  }
+
   if (input.components && input.components.length > 0) {
     const res = await request<ApiSuccess<Record<string, unknown>>>(
       '/whatsapp-outreach/templates',
@@ -352,6 +365,7 @@ export async function createWhatsAppTemplate(input: {
           language: input.language || 'en_US',
           category: input.category || 'UTILITY',
           components: input.components,
+          ...accountPayload,
         }),
       },
     )
@@ -385,6 +399,7 @@ export async function createWhatsAppTemplate(input: {
         language: input.language || 'en_US',
         category: input.category || 'UTILITY',
         components: [bodyComponent],
+        ...accountPayload,
       }),
     },
   )

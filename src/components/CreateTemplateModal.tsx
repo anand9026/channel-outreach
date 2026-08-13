@@ -9,10 +9,14 @@ import {
   Video as VideoIcon,
   X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiError, createGmailTemplate, createWhatsAppTemplate } from '../lib/api'
 import { extractMetaSlots } from '../lib/templateSlots'
 import { toMetaBody, toMetaTemplateName } from '../lib/metaTemplate'
+import {
+  labelWhatsAppAccount,
+  whatsAppAccountOptions,
+} from '../lib/whatsapp-account-options'
 import { useWhatsAppStore } from '../store/WhatsAppStore'
 import { RichTextEditor } from './RichTextEditor'
 import type { OutreachChannel, TemplateCategory } from '../types'
@@ -59,7 +63,30 @@ const uid = (p: string) => `${p}_${Date.now().toString(36)}_${++uidCounter}`
 
 export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
   const { state, actions } = useWhatsAppStore()
+  const waOptions = useMemo(
+    () => whatsAppAccountOptions(state.whatsAppNumbers),
+    [state.whatsAppNumbers],
+  )
+  const hasWhatsApp = waOptions.length > 0
   const [channel, setChannel] = useState<OutreachChannel>('whatsapp')
+  const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState('')
+
+  const selectedWa =
+    waOptions.find((n) => n.phoneNumberId === selectedPhoneNumberId) || waOptions[0]
+
+  useEffect(() => {
+    if (!open) return
+    if (waOptions.length === 0) {
+      if (state.emailAccounts.some((a) => a.provider === 'gmail')) {
+        setChannel('email')
+      }
+      return
+    }
+    setSelectedPhoneNumberId((prev) => {
+      if (prev && waOptions.some((n) => n.phoneNumberId === prev)) return prev
+      return waOptions[0].phoneNumberId
+    })
+  }, [open, waOptions, state.emailAccounts])
 
   // Core
   const [name, setName] = useState('')
@@ -114,7 +141,8 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     setButtonMode('none')
     setQuickReplies([{ id: uid('qr'), text: 'Yes, interested' }])
     setCtaButtons([{ id: uid('cta'), kind: 'URL', text: 'View brief', url: 'https://' }])
-    setChannel('whatsapp')
+    setChannel(hasWhatsApp ? 'whatsapp' : 'email')
+    setSelectedPhoneNumberId(waOptions[0]?.phoneNumberId || '')
   }
   const close = () => {
     reset()
@@ -240,6 +268,10 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
     }
 
     if (channel === 'whatsapp') {
+      if (!selectedWa?.phoneNumberId) {
+        actions.toast('Connect a WhatsApp Business number first', 'error')
+        return
+      }
       const metaName = toMetaTemplateName(name)
       if (!metaName) {
         actions.toast('Invalid template name (lowercase, underscores only)', 'error')
@@ -256,6 +288,8 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
           language,
           body: body.trim(),
           components,
+          phone_number_id: selectedWa.phoneNumberId,
+          waba_id: selectedWa.wabaId || undefined,
         })
         actions.submitTemplate({
           channel: 'whatsapp',
@@ -361,18 +395,49 @@ export function CreateTemplateModal({ open, onClose, onCreated }: Props) {
           <div className="rx-col rx-gap">
             <div className="rx-seg">
               <button
+                type="button"
                 className={`rx-seg-btn${channel === 'whatsapp' ? ' is-active' : ''}`}
+                disabled={!hasWhatsApp}
+                title={hasWhatsApp ? undefined : 'Connect WhatsApp first'}
                 onClick={() => setChannel('whatsapp')}
+                data-testid="tpl-channel-whatsapp"
               >
                 WhatsApp
               </button>
               <button
+                type="button"
                 className={`rx-seg-btn${channel === 'email' ? ' is-active' : ''}`}
                 onClick={() => setChannel('email')}
+                data-testid="tpl-channel-email"
               >
                 Email
               </button>
             </div>
+
+            {channel === 'whatsapp' && hasWhatsApp ? (
+              <div className="rx-field">
+                <label className="rx-label">WhatsApp account</label>
+                <select
+                  className="rx-select"
+                  value={selectedPhoneNumberId}
+                  onChange={(e) => setSelectedPhoneNumberId(e.target.value)}
+                  data-testid="tpl-wa-account"
+                >
+                  {waOptions.map((n) => (
+                    <option key={n.phoneNumberId} value={n.phoneNumberId}>
+                      {labelWhatsAppAccount(n)}
+                    </option>
+                  ))}
+                </select>
+                <p className="rx-help">
+                  Templates are created on this account&apos;s WhatsApp Business (WABA).
+                </p>
+              </div>
+            ) : channel === 'whatsapp' ? (
+              <div className="rx-help rx-mb-2">
+                Connect WhatsApp under Channels before creating a Meta template.
+              </div>
+            ) : null}
 
             <div className="rx-row" style={{ gap: 12, alignItems: 'flex-end' }}>
               <div className="rx-field" style={{ flex: 1 }}>
